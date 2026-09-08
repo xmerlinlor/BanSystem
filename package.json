@@ -1,10 +1,14 @@
 {
   "name": "ban-system",
   "version": "1.0.0",
-  "description": "Permanent and temporary ban management system",
+  "description": "Paid Telegram-controlled Ban System with payment, referrals, owner review, and approval management.",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "telegraf": "^4.16.3"
   },
   "engines": {
     "node": ">=18"
