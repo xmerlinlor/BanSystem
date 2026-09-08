@@ -1,0 +1,12 @@
+{
+  "name": "ban-system",
+  "version": "1.0.0",
+  "description": "Permanent and temporary ban management system",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
