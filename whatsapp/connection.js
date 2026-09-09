@@ -78,7 +78,6 @@ async function startWhatsApp() {
 
     sock = makeWASocket({
       auth: state,
-
       logger,
 
       printQRInTerminal: false,
@@ -134,7 +133,6 @@ async function startWhatsApp() {
             "✅ WhatsApp connected successfully."
           );
 
-          // Make sure ban.js has the newest socket.
           setWhatsAppSocket(sock);
         }
 
@@ -157,7 +155,6 @@ async function startWhatsApp() {
 
           sock = null;
 
-          // Prevent ban.js from using an old socket.
           setWhatsAppSocket(null);
 
           if (shouldReconnect) {
@@ -268,17 +265,3 @@ module.exports = {
   isConnected,
   logoutWhatsApp
 };
-
-NEXT DO THIS
-
-Save the file as:
-
-whatsapp/connection.js
-
-Your WhatsApp side is now:
-
-whatsapp/
-├── connection.js  ✅
-└── ban.js         ✅
-
-Don't start the bot yet. We still need to connect this WhatsApp layer to your main "index.js" and then connect approved Telegram requests to the appropriate service.
