@@ -1,7 +1,7 @@
 require("dotenv").config();
 
 const bot = require("./telegram/bot");
-const { registerHandlers } = require("./telegram/handlers");
+const { registerHandlers } = require("./telegram/handler");
 const {
   startWhatsApp
 } = require("./whatsapp/connection");
@@ -33,7 +33,9 @@ async function start() {
     // START WHATSAPP
     // ----------------------------------------------
 
-    console.log("🔄 Starting WhatsApp connection...");
+    console.log(
+      "🔄 Starting WhatsApp connection..."
+    );
 
     await startWhatsApp();
 
@@ -75,14 +77,24 @@ start();
 // GRACEFUL SHUTDOWN
 // ==================================================
 
-process.once("SIGINT", () => {
-  console.log("🛑 Stopping Ban System...");
+process.once(
+  "SIGINT",
+  () => {
+    console.log(
+      "🛑 Stopping Ban System..."
+    );
 
-  bot.stop("SIGINT");
-});
+    bot.stop("SIGINT");
+  }
+);
 
-process.once("SIGTERM", () => {
-  console.log("🛑 Stopping Ban System...");
+process.once(
+  "SIGTERM",
+  () => {
+    console.log(
+      "🛑 Stopping Ban System..."
+    );
 
-  bot.stop("SIGTERM");
-});
+    bot.stop("SIGTERM");
+  }
+);
