@@ -1,3 +1,5 @@
+// database/database.js
+
 const fs = require("fs");
 const path = require("path");
 
@@ -11,6 +13,10 @@ const defaultData = {
   bans: {},
   logs: {}
 };
+
+// ==================================================
+// DATABASE CORE
+// ==================================================
 
 function ensureDatabase() {
   if (!fs.existsSync(DATA_FILE)) {
@@ -26,19 +32,40 @@ function readDatabase() {
   ensureDatabase();
 
   try {
-    const data = fs.readFileSync(DATA_FILE, "utf8");
+    const data = fs.readFileSync(
+      DATA_FILE,
+      "utf8"
+    );
 
     if (!data.trim()) {
-      return JSON.parse(JSON.stringify(defaultData));
+      return JSON.parse(
+        JSON.stringify(defaultData)
+      );
     }
+
+    const parsed = JSON.parse(data);
 
     return {
       ...defaultData,
-      ...JSON.parse(data)
+      ...parsed,
+
+      users: parsed.users || {},
+      requests: parsed.requests || {},
+      payments: parsed.payments || {},
+      referrals: parsed.referrals || {},
+      bans: parsed.bans || {},
+      logs: parsed.logs || {}
     };
+
   } catch (error) {
-    console.error("❌ Database read error:", error.message);
-    return JSON.parse(JSON.stringify(defaultData));
+    console.error(
+      "❌ Database read error:",
+      error.message
+    );
+
+    return JSON.parse(
+      JSON.stringify(defaultData)
+    );
   }
 }
 
@@ -61,24 +88,34 @@ function updateDatabase(callback) {
   return writeDatabase(updated);
 }
 
-// ================================
+// ==================================================
 // USERS
-// ================================
+// ==================================================
 
 function getUser(userId) {
   const data = readDatabase();
-  return data.users[String(userId)] || null;
+
+  return (
+    data.users[String(userId)] ||
+    null
+  );
 }
 
-function saveUser(userId, userData = {}) {
+function saveUser(
+  userId,
+  userData = {}
+) {
   const data = readDatabase();
   const id = String(userId);
 
   data.users[id] = {
     ...(data.users[id] || {}),
     ...userData,
+
     userId: id,
-    updatedAt: new Date().toISOString()
+
+    updatedAt:
+      new Date().toISOString()
   };
 
   writeDatabase(data);
@@ -86,24 +123,34 @@ function saveUser(userId, userData = {}) {
   return data.users[id];
 }
 
-// ================================
+// ==================================================
 // REQUESTS
-// ================================
+// ==================================================
 
 function getRequest(requestId) {
   const data = readDatabase();
-  return data.requests[String(requestId)] || null;
+
+  return (
+    data.requests[String(requestId)] ||
+    null
+  );
 }
 
-function saveRequest(requestId, requestData = {}) {
+function saveRequest(
+  requestId,
+  requestData = {}
+) {
   const data = readDatabase();
   const id = String(requestId);
 
   data.requests[id] = {
     ...(data.requests[id] || {}),
     ...requestData,
+
     id,
-    updatedAt: new Date().toISOString()
+
+    updatedAt:
+      new Date().toISOString()
   };
 
   writeDatabase(data);
@@ -115,16 +162,22 @@ function getUserRequests(userId) {
   const data = readDatabase();
   const id = String(userId);
 
-  return Object.values(data.requests).filter(
-    (request) => String(request.userId) === id
+  return Object.values(
+    data.requests
+  ).filter(
+    request =>
+      String(request.userId) === id
   );
 }
 
 function getPendingRequests() {
   const data = readDatabase();
 
-  return Object.values(data.requests).filter((request) =>
+  return Object.values(
+    data.requests
+  ).filter(request =>
     [
+      "REPORTS_VERIFIED",
       "PAYMENT_PENDING",
       "PAYMENT_PROOF_PENDING",
       "PENDING_OWNER_APPROVAL"
@@ -132,19 +185,25 @@ function getPendingRequests() {
   );
 }
 
-// ================================
+// ==================================================
 // PAYMENTS
-// ================================
+// ==================================================
 
-function savePayment(paymentId, paymentData = {}) {
+function savePayment(
+  paymentId,
+  paymentData = {}
+) {
   const data = readDatabase();
   const id = String(paymentId);
 
   data.payments[id] = {
     ...(data.payments[id] || {}),
     ...paymentData,
+
     id,
-    updatedAt: new Date().toISOString()
+
+    updatedAt:
+      new Date().toISOString()
   };
 
   writeDatabase(data);
@@ -155,22 +214,31 @@ function savePayment(paymentId, paymentData = {}) {
 function getPayment(paymentId) {
   const data = readDatabase();
 
-  return data.payments[String(paymentId)] || null;
+  return (
+    data.payments[String(paymentId)] ||
+    null
+  );
 }
 
-// ================================
+// ==================================================
 // REFERRALS
-// ================================
+// ==================================================
 
-function saveReferral(referralId, referralData = {}) {
+function saveReferral(
+  referralId,
+  referralData = {}
+) {
   const data = readDatabase();
   const id = String(referralId);
 
   data.referrals[id] = {
     ...(data.referrals[id] || {}),
     ...referralData,
+
     id,
-    updatedAt: new Date().toISOString()
+
+    updatedAt:
+      new Date().toISOString()
   };
 
   writeDatabase(data);
@@ -181,22 +249,31 @@ function saveReferral(referralId, referralData = {}) {
 function getReferral(referralId) {
   const data = readDatabase();
 
-  return data.referrals[String(referralId)] || null;
+  return (
+    data.referrals[String(referralId)] ||
+    null
+  );
 }
 
-// ================================
+// ==================================================
 // BAN RECORDS
-// ================================
+// ==================================================
 
-function saveBan(banId, banData = {}) {
+function saveBan(
+  banId,
+  banData = {}
+) {
   const data = readDatabase();
   const id = String(banId);
 
   data.bans[id] = {
     ...(data.bans[id] || {}),
     ...banData,
+
     id,
-    updatedAt: new Date().toISOString()
+
+    updatedAt:
+      new Date().toISOString()
   };
 
   writeDatabase(data);
@@ -207,24 +284,48 @@ function saveBan(banId, banData = {}) {
 function getBan(banId) {
   const data = readDatabase();
 
-  return data.bans[String(banId)] || null;
+  return (
+    data.bans[String(banId)] ||
+    null
+  );
 }
 
-// ================================
+// ==================================================
 // LOGS
-// ================================
+// ==================================================
 
-function addLog(logData = {}) {
+function addLog(
+  typeOrData = {},
+  logData = {}
+) {
   const data = readDatabase();
 
-  const logId = `LOG-${Date.now()}-${Math.floor(
-    Math.random() * 1000
-  )}`;
+  const logId =
+    `LOG-${Date.now()}-${Math.floor(
+      Math.random() * 1000
+    )}`;
+
+  let entry;
+
+  if (
+    typeof typeOrData === "string"
+  ) {
+    entry = {
+      type: typeOrData,
+      ...logData
+    };
+  } else {
+    entry = {
+      ...typeOrData
+    };
+  }
 
   data.logs[logId] = {
     id: logId,
-    ...logData,
-    createdAt: new Date().toISOString()
+    ...entry,
+
+    createdAt:
+      new Date().toISOString()
   };
 
   writeDatabase(data);
@@ -235,8 +336,14 @@ function addLog(logData = {}) {
 function getLogs() {
   const data = readDatabase();
 
-  return Object.values(data.logs);
+  return Object.values(
+    data.logs
+  );
 }
+
+// ==================================================
+// EXPORTS
+// ==================================================
 
 module.exports = {
   ensureDatabase,
