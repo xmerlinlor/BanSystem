@@ -1,3 +1,5 @@
+// telegram/menu.js
+
 function getStartMenu(ctx) {
   const config = require("../config");
 
@@ -5,9 +7,21 @@ function getStartMenu(ctx) {
     ? `@${ctx.from.username}`
     : ctx.from?.first_name || "User";
 
-  const isOwner = config.ownerIds.includes(String(ctx.from.id));
+  const userId = String(ctx.from?.id || "");
 
-  return `╭━━━〔 🛡️ Bᴀɴ Sʏsᴛᴇᴍ 〕━━━╮
+  const isOwner = config.ownerIds.includes(userId);
+
+  /*
+   * Premium status will be supplied by handlers/database later.
+   * For now this safely defaults to NO.
+   */
+  const isPremium = false;
+
+  // ==================================================
+  // REGULAR USER MENU
+  // ==================================================
+
+  let menu = `╭━━━〔 🛡️ Bᴀɴ Sʏsᴛᴇᴍ 〕━━━╮
 
 👋 Wᴇʟᴄᴏᴍᴇ, ${username}
 
@@ -18,9 +32,9 @@ function getStartMenu(ctx) {
 
 📊 Yᴏᴜʀ Sᴛᴀᴛᴜs
 
-├ 💎 Pʀᴇᴍɪᴜᴍ: Nᴏ
+├ 💎 Pʀᴇᴍɪᴜᴍ: ${isPremium ? "Yᴇs" : "Nᴏ"}
 ├ 👑 Oᴡɴᴇʀ: ${isOwner ? "Yᴇs" : "Nᴏ"}
-├ 🆔 Uѕᴇʀ ID: ${ctx.from.id}
+├ 🆔 Uѕᴇʀ ID: ${userId}
 └ 👤 Uѕᴇʀ: ${username}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -58,18 +72,87 @@ function getStartMenu(ctx) {
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-💳 Pᴀʏᴍᴇɴᴛ
-🎁 Rᴇғᴇʀʀᴀʟ
-📩 Mʏ Rᴇǫᴜᴇsᴛs
+💳 Aᴄᴄᴏᴜɴᴛ & Rᴇǫᴜᴇsᴛs
 
-👑 Aᴅᴍɪɴ Pᴀɴᴇʟ
-⚡ Oᴡɴᴇʀ Pᴀɴᴇʟ
+├ 💰 /balance
+├ 💳 /deposit
+├ 📜 /deposits
+├ 💸 /transactions
+├ 🎁 /referral
+├ 👤 /profile
+├ 🆔 /id
+├ 📋 /request
+├ 📩 /myrequests
+├ 📚 /history
+├ 📊 /status
+└ ❌ /cancel
+
+ℹ️ Hᴇʟᴘ & Iɴғᴏ
+
+├ 📋 /services
+├ 💵 /price
+└ ℹ️ /help`;
+
+  // ==================================================
+  // OWNER COMMANDS
+  // ==================================================
+
+  if (isOwner) {
+    menu += `
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+👑 Oᴡɴᴇʀ Cᴏᴍᴍᴀɴᴅs
+
+🎛️ Pᴀɴᴇʟ
+├ 👑 /owner
+├ ⚡ /panel
+├ 📋 /requests
+├ ⏳ /pending
+├ ✅ /approve
+└ ❌ /reject
+
+💳 Pᴀʏᴍᴇɴᴛs
+├ 💰 /payments
+└ 🔎 /paymentinfo
+
+👥 Uѕᴇʀ Mᴀɴᴀɢᴇᴍᴇɴᴛ
+├ 👥 /users
+├ 🔎 /userinfo
+├ 🚫 /banlist
+└ 📜 /logs
+
+💎 Pʀᴇᴍɪᴜᴍ Mᴀɴᴀɢᴇᴍᴇɴᴛ
+├ 💎 /premium USER_ID
+├ 🔴 /premiumoff USER_ID
+├ 🔎 /premiuminfo USER_ID
+└ 📋 /premiumusers
+
+💰 Wᴀʟʟᴇᴛ Aᴅᴍɪɴ
+├ ➕ /credit USER_ID AMOUNT
+└ ➖ /debit USER_ID AMOUNT
+
+⚙️ Sʏsᴛᴇᴍ
+├ 📊 /stats
+├ 📢 /broadcast
+├ 🔧 /maintenance
+├ ⚙️ /settings
+└ 🔄 /restart`;
+  }
+
+  // ==================================================
+  // FOOTER
+  // ==================================================
+
+  menu += `
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ⚠️ Aʟʟ Rᴇǫᴜᴇsᴛs Rᴇǫᴜɪʀᴇ Oᴡɴᴇʀ Rᴇᴠɪᴇᴡ.
 
 ╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯`;
+
+  return menu;
 }
 
 module.exports = {
