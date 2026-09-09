@@ -1,24 +1,64 @@
 // telegram/menu.js
 
+const config = require("../config");
+const {
+  getUser
+} = require("../database/database");
+
+// ==================================================
+// GET PREMIUM STATUS
+// ==================================================
+
+function isPremiumUser(userId) {
+  try {
+    const user = getUser(String(userId));
+
+    return !!(
+      user &&
+      (
+        user.premium === true ||
+        user.isPremium === true
+      )
+    );
+  } catch (error) {
+    console.error(
+      "❌ Premium status error:",
+      error.message
+    );
+
+    return false;
+  }
+}
+
+// ==================================================
+// GET START MENU
+// ==================================================
+
 function getStartMenu(ctx) {
-  const config = require("../config");
+  const telegramUser = ctx?.from || {};
 
-  const username = ctx.from?.username
-    ? `@${ctx.from.username}`
-    : ctx.from?.first_name || "User";
+  const userId = String(
+    telegramUser.id || ""
+  );
 
-  const userId = String(ctx.from?.id || "");
+  const username = telegramUser.username
+    ? `@${telegramUser.username}`
+    : telegramUser.first_name || "User";
 
-  const isOwner = config.ownerIds.includes(userId);
+  const ownerIds = Array.isArray(
+    config.ownerIds
+  )
+    ? config.ownerIds.map(String)
+    : [];
 
-  /*
-   * Premium status will be supplied by handlers/database later.
-   * For now this safely defaults to NO.
-   */
-  const isPremium = false;
+  const isOwner =
+    ownerIds.includes(userId);
+
+  const isPremium =
+    isPremiumUser(userId);
 
   // ==================================================
-  // REGULAR USER MENU
+  // USER MENU
   // ==================================================
 
   let menu = `╭━━━〔 🛡️ Bᴀɴ Sʏsᴛᴇᴍ 〕━━━╮
@@ -32,8 +72,8 @@ function getStartMenu(ctx) {
 
 📊 Yᴏᴜʀ Sᴛᴀᴛᴜs
 
-├ 💎 Pʀᴇᴍɪᴜᴍ: ${isPremium ? "Yᴇs" : "Nᴏ"}
-├ 👑 Oᴡɴᴇʀ: ${isOwner ? "Yᴇs" : "Nᴏ"}
+├ 💎 Pʀᴇᴍɪᴜᴍ: ${isPremium ? "Yᴇs 💎" : "Nᴏ"}
+├ 👑 Oᴡɴᴇʀ: ${isOwner ? "Yᴇs 👑" : "Nᴏ"}
 ├ 🆔 Uѕᴇʀ ID: ${userId}
 └ 👤 Uѕᴇʀ: ${username}
 
@@ -42,21 +82,22 @@ function getStartMenu(ctx) {
 🛡️ Bᴀɴ Sᴇʀᴠɪᴄᴇs
 
 📱 WʜᴀᴛsAᴘᴘ
-├ ⚡ Uѕᴇʀ Bᴀɴ
-├ 🔓 Uѕᴇʀ Uɴʙᴀɴ
-├ 👥 Gʀᴏᴜᴘ Bᴀɴ
-├ 👥 Gʀᴏᴜᴘ Uɴʙᴀɴ
-├ 📢 Cʜᴀɴɴᴇʟ Bᴀɴ
-└ 📢 Cʜᴀɴɴᴇʟ Uɴʙᴀɴ
+
+├ ⚡ /ban NUMBER
+├ 🔓 /unban NUMBER
+├ 👥 /bangroup LINK
+├ 🔓 /unbangroup LINK
+├ 📢 /banchannel LINK
+└ 🔓 /unbanchannel LINK
 
 ✈️ Tᴇʟᴇɢʀᴀᴍ
-├ ⚡ Uѕᴇʀ Bᴀɴ
-├ 🔓 Uѕᴇʀ Uɴʙᴀɴ
-├ 👥 Gʀᴏᴜᴘ Bᴀɴ
-├ 👥 Gʀᴏᴜᴘ Uɴʙᴀɴ
-├ 📢 Cʜᴀɴɴᴇʟ Bᴀɴ
-├ 📢 Cʜᴀɴɴᴇʟ Uɴʙᴀɴ
-└ 🤖 Bᴏᴛ Bᴀɴ
+
+├ ⚡ /tgban ID
+├ 🔓 /tgunban ID
+├ 👥 /tggroupban ID
+├ 🔓 /tggroupunban ID
+├ 📢 /tgchannelban ID
+└ 🔓 /tgchannelunban ID
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -76,7 +117,6 @@ function getStartMenu(ctx) {
 
 ├ 💰 /balance
 ├ 💳 /deposit
-├ 📜 /deposits
 ├ 💸 /transactions
 ├ 🎁 /referral
 ├ 👤 /profile
@@ -94,7 +134,23 @@ function getStartMenu(ctx) {
 └ ℹ️ /help`;
 
   // ==================================================
-  // OWNER COMMANDS
+  // PREMIUM USER
+  // ==================================================
+
+  if (isPremium) {
+    menu += `
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+💎 Pʀᴇᴍɪᴜᴍ Aᴄᴄᴇss
+
+├ 💎 Pʀᴇᴍɪᴜᴍ Aᴄᴄᴇss: Aᴄᴛɪᴠᴇ
+├ ⚡ Fᴀsᴛ Rᴇǫᴜᴇsᴛ Pʀᴏᴄᴇssɪɴɢ
+└ 👑 Pʀᴇᴍɪᴜᴍ Uѕᴇʀ Sᴜᴘᴘᴏʀᴛ`;
+  }
+
+  // ==================================================
+  // OWNER MENU
   // ==================================================
 
   if (isOwner) {
@@ -105,34 +161,40 @@ function getStartMenu(ctx) {
 👑 Oᴡɴᴇʀ Cᴏᴍᴍᴀɴᴅs
 
 🎛️ Pᴀɴᴇʟ
+
 ├ 👑 /owner
 ├ ⚡ /panel
 ├ 📋 /requests
 ├ ⏳ /pending
-├ ✅ /approve
-└ ❌ /reject
+├ ✅ /approve ID
+└ ❌ /reject ID
 
 💳 Pᴀʏᴍᴇɴᴛs
+
 ├ 💰 /payments
-└ 🔎 /paymentinfo
+└ 🔎 /paymentinfo ID
 
 👥 Uѕᴇʀ Mᴀɴᴀɢᴇᴍᴇɴᴛ
+
 ├ 👥 /users
-├ 🔎 /userinfo
+├ 🔎 /userinfo ID
 ├ 🚫 /banlist
 └ 📜 /logs
 
 💎 Pʀᴇᴍɪᴜᴍ Mᴀɴᴀɢᴇᴍᴇɴᴛ
+
 ├ 💎 /premium USER_ID
 ├ 🔴 /premiumoff USER_ID
 ├ 🔎 /premiuminfo USER_ID
 └ 📋 /premiumusers
 
 💰 Wᴀʟʟᴇᴛ Aᴅᴍɪɴ
+
 ├ ➕ /credit USER_ID AMOUNT
 └ ➖ /debit USER_ID AMOUNT
 
 ⚙️ Sʏsᴛᴇᴍ
+
 ├ 📊 /stats
 ├ 📢 /broadcast
 ├ 🔧 /maintenance
@@ -148,13 +210,19 @@ function getStartMenu(ctx) {
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚠️ Aʟʟ Rᴇǫᴜᴇsᴛs Rᴇǫᴜɪʀᴇ Oᴡɴᴇʀ Rᴇᴠɪᴇᴡ.
+⚠️ Aʟʟ Sᴇʀᴠɪᴄᴇ Rᴇǫᴜᴇsᴛs Rᴇǫᴜɪʀᴇ
+👑 Oᴡɴᴇʀ Rᴇᴠɪᴇᴡ & Aᴘᴘʀᴏᴠᴀʟ.
 
 ╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯`;
 
   return menu;
 }
 
+// ==================================================
+// EXPORT
+// ==================================================
+
 module.exports = {
-  getStartMenu
+  getStartMenu,
+  isPremiumUser
 };
