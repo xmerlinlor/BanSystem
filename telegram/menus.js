@@ -1,64 +1,35 @@
+// BAN SYSTEM MENU
 // telegram/menu.js
 
 const config = require("../config");
-const {
-  getUser
-} = require("../database/database");
-
-// ==================================================
-// GET PREMIUM STATUS
-// ==================================================
-
-function isPremiumUser(userId) {
-  try {
-    const user = getUser(String(userId));
-
-    return !!(
-      user &&
-      (
-        user.premium === true ||
-        user.isPremium === true
-      )
-    );
-  } catch (error) {
-    console.error(
-      "❌ Premium status error:",
-      error.message
-    );
-
-    return false;
-  }
-}
 
 // ==================================================
 // GET START MENU
 // ==================================================
 
 function getStartMenu(ctx) {
-  const telegramUser = ctx?.from || {};
+  const user = ctx?.from || {};
 
-  const userId = String(
-    telegramUser.id || ""
-  );
+  const userId = String(user.id || "");
 
-  const username = telegramUser.username
-    ? `@${telegramUser.username}`
-    : telegramUser.first_name || "User";
+  const username = user.username
+    ? `@${user.username}`
+    : user.first_name || "User";
 
-  const ownerIds = Array.isArray(
-    config.ownerIds
-  )
+  const ownerIds = Array.isArray(config.ownerIds)
     ? config.ownerIds.map(String)
     : [];
 
-  const isOwner =
-    ownerIds.includes(userId);
+  const isOwner = ownerIds.includes(userId);
 
-  const isPremium =
-    isPremiumUser(userId);
+  /*
+   * Premium is intentionally handled by the handlers/database.
+   * This menu does not require database.js.
+   */
+  const isPremium = false;
 
   // ==================================================
-  // USER MENU
+  // MAIN USER MENU
   // ==================================================
 
   let menu = `╭━━━〔 🛡️ Bᴀɴ Sʏsᴛᴇᴍ 〕━━━╮
@@ -103,13 +74,13 @@ function getStartMenu(ctx) {
 
 💰 Pʀɪᴄɪɴɢ
 
-👤 Uѕᴇʀ Bᴀɴ: ₦${config.prices.userBan}
-🔓 Uѕᴇʀ Uɴʙᴀɴ: ₦${config.prices.userUnban}
+👤 Uѕᴇʀ Bᴀɴ: ₦${config.prices?.userBan ?? 0}
+🔓 Uѕᴇʀ Uɴʙᴀɴ: ₦${config.prices?.userUnban ?? 0}
 
-👥 Gʀᴏᴜᴘ/Cʜᴀɴɴᴇʟ Bᴀɴ: ₦${config.prices.groupChannelBan}
-🔓 Gʀᴏᴜᴘ/Cʜᴀɴɴᴇʟ Uɴʙᴀɴ: ₦${config.prices.groupChannelUnban}
+👥 Gʀᴏᴜᴘ/Cʜᴀɴɴᴇʟ Bᴀɴ: ₦${config.prices?.groupChannelBan ?? 0}
+🔓 Gʀᴏᴜᴘ/Cʜᴀɴɴᴇʟ Uɴʙᴀɴ: ₦${config.prices?.groupChannelUnban ?? 0}
 
-🎁 Rᴇғᴇʀʀᴀʟ Rᴇᴡᴀʀᴅ: ₦${config.referral.reward}
+🎁 Rᴇғᴇʀʀᴀʟ Rᴇᴡᴀʀᴅ: ₦${config.referral?.reward ?? 0}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -134,7 +105,7 @@ function getStartMenu(ctx) {
 └ ℹ️ /help`;
 
   // ==================================================
-  // PREMIUM USER
+  // PREMIUM SECTION
   // ==================================================
 
   if (isPremium) {
@@ -144,13 +115,13 @@ function getStartMenu(ctx) {
 
 💎 Pʀᴇᴍɪᴜᴍ Aᴄᴄᴇss
 
-├ 💎 Pʀᴇᴍɪᴜᴍ Aᴄᴄᴇss: Aᴄᴛɪᴠᴇ
-├ ⚡ Fᴀsᴛ Rᴇǫᴜᴇsᴛ Pʀᴏᴄᴇssɪɴɢ
-└ 👑 Pʀᴇᴍɪᴜᴍ Uѕᴇʀ Sᴜᴘᴘᴏʀᴛ`;
+├ 💎 Sᴛᴀᴛᴜs: Aᴄᴛɪᴠᴇ
+├ ⚡ Pʀᴇᴍɪᴜᴍ Aᴄᴄᴇss
+└ 👑 Pʀɪᴏʀɪᴛʏ Sᴜᴘᴘᴏʀᴛ`;
   }
 
   // ==================================================
-  // OWNER MENU
+  // OWNER SECTION
   // ==================================================
 
   if (isOwner) {
@@ -223,6 +194,9 @@ function getStartMenu(ctx) {
 // ==================================================
 
 module.exports = {
-  getStartMenu,
-  isPremiumUser
+  getStartMenu
 };
+
+
+
+
