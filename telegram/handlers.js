@@ -1,1776 +1,2116 @@
-const { Markup } = require("telegraf");
+// telegram/handlers.js
 
+const { Markup } = require("telegraf");
 const config = require("../config");
-const { startButtons } = require("./buttons");
-const { getStartMenu } = require("./menus");
 
 const {
+  getStartMenu
+} = require("./menu");
+
+const {
+  getUser,
+  saveUser,
   getRequest,
   saveRequest,
   getUserRequests,
   getPendingRequests,
   savePayment,
-  addLog,
-  saveUser,
-  readDatabase,
-  saveBan
+  getPayment,
+  saveBan,
+  addLog
 } = require("../database/database");
-
-const {
-  checkForceJoin,
-  forceJoinKeyboard
-} = require("../utils/forceJoin");
-
-// ==================================================
-// BAN SERVICE
-// ==================================================
 
 const {
   executeBanRequest
 } = require("../services/banService");
 
 // ==================================================
-// SERVICES
+// SETTINGS
 // ==================================================
 
-const SERVICES = {
-  whatsapp_ban: {
-    name: "WhatsApp User Ban",
-    price: config.prices.userBan
-  },
+const REQUIRED_REPORTS = 5;
 
-  whatsapp_unban: {
-    name: "WhatsApp User Unban",
-    price: config.prices.userUnban
-  },
-
-  whatsapp_group_ban: {
-    name: "WhatsApp Group Ban",
-    price: config.prices.groupChannelBan
-  },
-
-  whatsapp_group_unban: {
-    name: "WhatsApp Group Unban",
-    price: config.prices.groupChannelUnban
-  },
-
-  whatsapp_channel_ban: {
-    name: "WhatsApp Channel Ban",
-    price: config.prices.groupChannelBan
-  },
-
-  whatsapp_channel_unban: {
-    name: "WhatsApp Channel Unban",
-    price: config.prices.groupChannelUnban
-  },
-
-  telegram_ban: {
-    name: "Telegram User Ban",
-    price: config.prices.userBan
-  },
-
-  telegram_unban: {
-    name: "Telegram User Unban",
-    price: config.prices.userUnban
-  },
-
-  telegram_group_ban: {
-    name: "Telegram Group Ban",
-    price: config.prices.groupChannelBan
-  },
-
-  telegram_group_unban: {
-    name: "Telegram Group Unban",
-    price: config.prices.groupChannelUnban
-  },
-
-  telegram_channel_ban: {
-    name: "Telegram Channel Ban",
-    price: config.prices.groupChannelBan
-  },
-
-  telegram_channel_unban: {
-    name: "Telegram Channel Unban",
-    price: config.prices.groupChannelUnban
-  },
-
-  telegram_bot_ban: {
-    name: "Telegram Bot Ban",
-    price: config.prices.userBan
-  }
-};
+const waiting = new Map();
 
 // ==================================================
 // HELPERS
 // ==================================================
 
-function isOwner(userId) {
-  return config.ownerIds.includes(String(userId));
+function userId(ctx) {
+  return String(ctx.from?.id || "");
 }
 
-function generateRequestId() {
-  return `REQ-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+function username(ctx) {
+  return ctx.from?.username
+    ? `@${ctx.from.username}`
+    : ctx.from?.first_name || "User";
 }
 
-function generatePaymentId() {
-  return `PAY-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+function isOwner(ctx) {
+  return config.ownerIds.includes(userId(ctx));
+}
+
+function money(amount) {
+  return `₦${Number(amount || 0).toLocaleString()}`;
+}
+
+function now() {
+  return new Date().toLocaleString("en-GB", {
+    timeZone: "Africa/Lagos"
+  });
+}
+
+function makeId(prefix) {
+  return `${prefix}-${Date.now()}-${Math.floor(
+    Math.random() * 1000
+  )}`;
+}
+
+function getBalance(ctx) {
+  const user = getUser(userId(ctx));
+
+  return Number(
+    user?.balance ||
+    user?.wallet ||
+    0
+  );
+}
+
+function setBalance(id, amount) {
+  const user = getUser(id) || {
+    id,
+    balance: 0
+  };
+
+  user.balance = Number(amount);
+
+  saveUser(id, user);
+
+  return user;
+}
+
+function changeBalance(id, amount) {
+  const user = getUser(id) || {
+    id,
+    balance: 0
+  };
+
+  user.balance =
+    Number(user.balance || 0) +
+    Number(amount || 0);
+
+  if (user.balance < 0) {
+    user.balance = 0;
+  }
+
+  saveUser(id, user);
+
+  return user.balance;
+}
+
+function isPremium(id) {
+  const user = getUser(String(id));
+
+  return Boolean(
+    user?.premium === true ||
+    user?.isPremium === true
+  );
+}
+
+function setPremium(id, value) {
+  const user = getUser(String(id)) || {
+    id: String(id)
+  };
+
+  user.premium = Boolean(value);
+  user.isPremium = Boolean(value);
+
+  saveUser(String(id), user);
+
+  return user;
+}
+
+function getReportCount(request) {
+  return Array.isArray(request?.reports)
+    ? request.reports.length
+    : Number(request?.reportCount || 0);
+}
+
+function hasReported(request, id) {
+  return Array.isArray(request?.reports)
+    ? request.reports.some(
+        report =>
+          String(report.userId) === String(id)
+      )
+    : false;
+}
+
+function addReport(request, ctx) {
+  if (!Array.isArray(request.reports)) {
+    request.reports = [];
+  }
+
+  if (hasReported(request, userId(ctx))) {
+    return false;
+  }
+
+  request.reports.push({
+    userId: userId(ctx),
+    username: username(ctx),
+    submittedAt: now()
+  });
+
+  request.reportCount =
+    request.reports.length;
+
+  return true;
+}
+
+function reportStatus(request) {
+  const count = getReportCount(request);
+
+  let text = "";
+
+  for (let i = 1; i <= REQUIRED_REPORTS; i++) {
+    text +=
+      i <= count
+        ? `✅ Report ${i}/5\n`
+        : `⬜ Report ${i}/5\n`;
+  }
+
+  return text.trim();
+}
+
+function banGuard(request, status = "REPORT VERIFICATION") {
+  return `🛡️ Bᴀɴ Gᴜᴀʀᴅ
+
+📱 Target: ${request.target}
+🔴 Status: ${status}
+
+━━━━━━━━━━━━━━━━━━
+
+📊 Rᴇᴘᴏʀᴛ Pʀᴏɢʀᴇss
+
+${reportStatus(request)}
+
+━━━━━━━━━━━━━━━━━━
+
+📊 Reports: ${getReportCount(request)}/${REQUIRED_REPORTS}`;
+}
+
+function requestSummary(request) {
+  return `🆔 Request: ${request.id}
+👤 User: ${request.username || request.userId}
+🛡️ Service: ${request.service}
+📱 Target: ${request.target}
+📝 Reason: ${request.reason || "Not provided"}
+📊 Reports: ${getReportCount(request)}/${REQUIRED_REPORTS}
+💰 Price: ${money(request.price)}
+📌 Status: ${request.status}`;
+}
+
+// ==================================================
+// SERVICE PRICES
+// ==================================================
+
+function getPrice(service) {
+  switch (service) {
+    case "whatsapp_ban":
+      return Number(config.prices.userBan || 0);
+
+    case "whatsapp_unban":
+      return Number(config.prices.userUnban || 0);
+
+    case "whatsapp_group_ban":
+    case "whatsapp_channel_ban":
+    case "telegram_group_ban":
+    case "telegram_channel_ban":
+      return Number(
+        config.prices.groupChannelBan || 0
+      );
+
+    case "whatsapp_group_unban":
+    case "whatsapp_channel_unban":
+    case "telegram_group_unban":
+    case "telegram_channel_unban":
+      return Number(
+        config.prices.groupChannelUnban || 0
+      );
+
+    case "telegram_ban":
+      return Number(config.prices.userBan || 0);
+
+    case "telegram_unban":
+      return Number(config.prices.userUnban || 0);
+
+    default:
+      return 0;
+  }
+}
+
+// ==================================================
+// TARGET VALIDATION
+// ==================================================
+
+function validPhone(value) {
+  return /^\d{8,15}$/.test(
+    String(value || "")
+  );
+}
+
+function validWhatsAppGroup(value) {
+  return /^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9]+$/i.test(
+    String(value || "").trim()
+  );
+}
+
+function validWhatsAppChannel(value) {
+  return /^https:\/\/whatsapp\.com\/channel\/[A-Za-z0-9_-]+$/i.test(
+    String(value || "").trim()
+  );
+}
+
+function validTelegramId(value) {
+  return /^-?\d+$/.test(
+    String(value || "").trim()
+  );
+}
+
+// ==================================================
+// START
+// ==================================================
+
+async function startCommand(ctx) {
+  return ctx.reply(
+    getStartMenu(ctx),
+    {
+      parse_mode: "HTML"
+    }
+  );
+}
+
+// ==================================================
+// HELP
+// ==================================================
+
+async function helpCommand(ctx) {
+  return ctx.reply(
+`🛡️ Bᴀɴ Sʏsᴛᴇᴍ Hᴇʟᴘ
+
+📱 WʜᴀᴛsAᴘᴘ
+
+/ban 234xxxxxxxxx
+/unban 234xxxxxxxxx
+
+/bangroup https://chat.whatsapp.com/...
+/unbangroup https://chat.whatsapp.com/...
+
+/banchannel https://whatsapp.com/channel/...
+/unbanchannel https://whatsapp.com/channel/...
+
+✈️ Tᴇʟᴇɢʀᴀᴍ
+
+/tgban USER_ID
+/tgunban USER_ID
+
+/tggroupban GROUP_ID
+/tggroupunban GROUP_ID
+
+/tgchannelban CHANNEL_ID
+/tgchannelunban CHANNEL_ID
+
+💰 Aᴄᴄᴏᴜɴᴛ
+
+/balance
+/deposit AMOUNT
+/deposits
+/transactions
+/profile
+/id
+/referral
+
+📋 Rᴇǫᴜᴇsᴛs
+
+/myrequests
+/history
+/status REQUEST_ID
+/cancel REQUEST_ID`
+  );
+}
+
+// ==================================================
+// PROFILE
+// ==================================================
+
+async function profileCommand(ctx) {
+  const id = userId(ctx);
+
+  return ctx.reply(
+`👤 Pʀᴏғɪʟᴇ
+
+├ 👤 User: ${username(ctx)}
+├ 🆔 ID: ${id}
+├ 💎 Premium: ${isPremium(id) ? "Yes" : "No"}
+└ 💰 Balance: ${money(getBalance(ctx))}`
+  );
+}
+
+async function idCommand(ctx) {
+  return ctx.reply(
+    `🆔 Yᴏᴜʀ Tᴇʟᴇɢʀᴀᴍ ID\n\n${userId(ctx)}`
+  );
+}
+
+// ==================================================
+// BALANCE
+// ==================================================
+
+async function balanceCommand(ctx) {
+  return ctx.reply(
+`💰 Bᴀʟᴀɴᴄᴇ
+
+💵 Balance: ${money(getBalance(ctx))}
+
+💳 Use:
+/deposit AMOUNT
+
+to add funds.`
+  );
+}
+
+// ==================================================
+// DEPOSIT
+// ==================================================
+
+async function depositCommand(ctx) {
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
+
+  const amount = Number(args[1]);
+
+  if (!amount || amount <= 0) {
+    return ctx.reply(
+      "❌ Usage:\n/deposit 5000"
+    );
+  }
+
+  const id = makeId("DEP");
+
+  const payment = {
+    id,
+    userId: userId(ctx),
+    username: username(ctx),
+    amount,
+    status: "PAYMENT_PENDING",
+    createdAt: now()
+  };
+
+  savePayment(id, payment);
+
+  return ctx.reply(
+`💳 Dᴇᴘᴏsɪᴛ Rᴇǫᴜᴇsᴛ
+
+🆔 Deposit: ${id}
+💵 Amount: ${money(amount)}
+
+🏦 Payment Information
+
+Bank: ${config.payment.bankName}
+Account: ${config.payment.accountNumber}
+Name: ${config.payment.accountName}
+
+━━━━━━━━━━━━━━━━━━
+
+📸 After payment, send your
+payment proof to this chat.
+
+⏳ Status: WAITING FOR PAYMENT PROOF
+
+👑 Your deposit will be credited
+after owner verification.`
+  );
+}
+
+// ==================================================
+// REQUEST CREATION
+// ==================================================
+
+function createRequest(ctx, service, target) {
+  const requestId = makeId("REQ");
+
+  const request = {
+    id: requestId,
+
+    userId: userId(ctx),
+    username: username(ctx),
+
+    service,
+    target,
+
+    reason: null,
+
+    price: getPrice(service),
+
+    reportCount: 0,
+    reports: [],
+
+    status: "REPORT_PENDING",
+
+    paymentStatus: "UNPAID",
+    executionStatus: "WAITING",
+
+    createdAt: now(),
+    updatedAt: now()
+  };
+
+  saveRequest(requestId, request);
+
+  return request;
+}
+
+// ==================================================
+// BAN COMMAND
+// ==================================================
+
+async function banCommand(ctx) {
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
+
+  const target = args[1];
+
+  if (!target) {
+    return ctx.reply(
+`🛡️ WʜᴀᴛsAᴘᴘ Bᴀɴ
+
+Usage:
+
+/ban 234xxxxxxxxx
+
+📱 Phone number only.`
+    );
+  }
+
+  if (!validPhone(target)) {
+    return ctx.reply(
+      "❌ Invalid WhatsApp phone number.\n\nUse numbers only."
+    );
+  }
+
+  const request =
+    createRequest(
+      ctx,
+      "whatsapp_ban",
+      target
+    );
+
+  waiting.set(userId(ctx), {
+    type: "reason",
+    requestId: request.id
+  });
+
+  return ctx.reply(
+`${banGuard(request)}
+
+━━━━━━━━━━━━━━━━━━
+
+📝 Rᴇᴀsᴏɴ
+
+Please send the reason for this request.
+
+Example:
+Age verification failure`
+  );
+}
+
+// ==================================================
+// UNBAN COMMAND
+// ==================================================
+
+async function unbanCommand(ctx) {
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
+
+  const target = args[1];
+
+  if (!target) {
+    return ctx.reply(
+`🔓 WʜᴀᴛsAᴘᴘ Uɴʙᴀɴ
+
+Usage:
+
+/unban 234xxxxxxxxx
+
+📱 Phone number only.`
+    );
+  }
+
+  if (!validPhone(target)) {
+    return ctx.reply(
+      "❌ Invalid WhatsApp phone number."
+    );
+  }
+
+  const request =
+    createRequest(
+      ctx,
+      "whatsapp_unban",
+      target
+    );
+
+  const existing = require("../database/database")
+    .getBan(target);
+
+  request.banRecord = existing || null;
+
+  if (existing) {
+    request.reason =
+      existing.reason ||
+      "Previous ban record";
+  }
+
+  request.unbanType =
+    "Permanent Unban";
+
+  saveRequest(request.id, request);
+
+  return ctx.reply(
+`🔓 WʜᴀᴛsAᴘᴘ Uɴʙᴀɴ
+
+${existing
+  ? `🛡️ Bᴀɴ Gᴜᴀʀᴅ
+
+📱 Phone: ${target}
+🔴 Status: BANNED
+📝 Reason: ${existing.reason || "Not recorded"}
+⏳ Type: ${existing.type || "Permanent"}
+🕐 Ban at: ${existing.banAt || "Unknown"}`
+  : `📱 Phone: ${target}
+
+⚠️ No saved BAN GUARD record was found.`}
+
+━━━━━━━━━━━━━━━━━━
+
+⚙️ Uɴʙᴀɴ Tʏᴘᴇ
+
+🔓 Permanently Unban
+
+━━━━━━━━━━━━━━━━━━
+
+📊 5-report verification is required
+before the request can proceed.
+
+Use:
+
+/report ${request.id}`
+  );
+}
+
+// ==================================================
+// REPORT COMMAND
+// ==================================================
+
+async function reportCommand(ctx) {
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
+
+  const requestId = args[1];
+
+  if (!requestId) {
+    return ctx.reply(
+      "❌ Usage:\n/report REQUEST_ID"
+    );
+  }
+
+  const request =
+    getRequest(requestId);
+
+  if (!request) {
+    return ctx.reply(
+      "❌ Request not found."
+    );
+  }
+
+  if (
+    String(request.userId) !==
+      userId(ctx) &&
+    !isOwner(ctx)
+  ) {
+    return ctx.reply(
+      "❌ You cannot modify this request."
+    );
+  }
+
+  if (
+    request.status ===
+    "COMPLETED"
+  ) {
+    return ctx.reply(
+      "❌ This request is already completed."
+    );
+  }
+
+  if (hasReported(request, userId(ctx))) {
+    return ctx.reply(
+      "⚠️ You have already submitted a report for this request."
+    );
+  }
+
+  const added =
+    addReport(request, ctx);
+
+  if (!added) {
+    return ctx.reply(
+      "⚠️ Report was not added."
+    );
+  }
+
+  request.updatedAt = now();
+
+  if (
+    getReportCount(request) >=
+    REQUIRED_REPORTS
+  ) {
+    request.status =
+      "REPORTS_VERIFIED";
+  }
+
+  saveRequest(
+    request.id,
+    request
+  );
+
+  if (
+    getReportCount(request) <
+    REQUIRED_REPORTS
+  ) {
+    return ctx.reply(
+`${banGuard(
+  request,
+  "REPORT VERIFICATION"
+)}
+
+⏳ ${getReportCount(request)}/5 reports verified.
+
+Waiting for ${
+  REQUIRED_REPORTS -
+  getReportCount(request)
+} more legitimate report/review records.`
+    );
+  }
+
+  return ctx.reply(
+`${banGuard(
+  request,
+  "REPORTS VERIFIED"
+)}
+
+━━━━━━━━━━━━━━━━━━
+
+✅ 5-REPORT REQUIREMENT COMPLETE
+
+💰 Required: ${money(request.price)}
+💵 Balance: ${money(getBalance(ctx))}
+
+${getBalance(ctx) >= request.price
+  ? "✅ Balance is sufficient."
+  : `❌ Missing: ${money(
+      request.price -
+      getBalance(ctx)
+    )}
+
+Use:
+/deposit ${
+      request.price -
+      getBalance(ctx)
+    }`}
+
+${getBalance(ctx) >= request.price
+  ? "\n👑 Request is ready for owner approval."
+  : ""}`
+  );
+}
+
+// ==================================================
+// MY REQUESTS
+// ==================================================
+
+async function myRequestsCommand(ctx) {
+  const requests =
+    getUserRequests(userId(ctx)) || [];
+
+  if (!requests.length) {
+    return ctx.reply(
+      "📋 You have no requests yet."
+    );
+  }
+
+  const recent =
+    requests.slice(-10).reverse();
+
+  let text =
+    "📋 Yᴏᴜʀ Rᴇǫᴜᴇsᴛs\n\n";
+
+  for (const request of recent) {
+    text +=
+`🆔 ${request.id}
+🛡️ ${request.service}
+🎯 ${request.target}
+📊 ${request.status}
+━━━━━━━━━━━━━━━━━━
+`;
+  }
+
+  return ctx.reply(text);
+}
+
+// ==================================================
+// STATUS
+// ==================================================
+
+async function statusCommand(ctx) {
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
+
+  const requestId = args[1];
+
+  if (!requestId) {
+    return ctx.reply(
+      "❌ Usage:\n/status REQUEST_ID"
+    );
+  }
+
+  const request =
+    getRequest(requestId);
+
+  if (!request) {
+    return ctx.reply(
+      "❌ Request not found."
+    );
+  }
+
+  if (
+    String(request.userId) !==
+      userId(ctx) &&
+    !isOwner(ctx)
+  ) {
+    return ctx.reply(
+      "❌ You cannot view this request."
+    );
+  }
+
+  return ctx.reply(
+    requestSummary(request)
+  );
+}
+
+// ==================================================
+// CANCEL
+// ==================================================
+
+async function cancelCommand(ctx) {
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
+
+  const requestId = args[1];
+
+  if (!requestId) {
+    return ctx.reply(
+      "❌ Usage:\n/cancel REQUEST_ID"
+    );
+  }
+
+  const request =
+    getRequest(requestId);
+
+  if (!request) {
+    return ctx.reply(
+      "❌ Request not found."
+    );
+  }
+
+  if (
+    String(request.userId) !==
+    userId(ctx)
+  ) {
+    return ctx.reply(
+      "❌ This is not your request."
+    );
+  }
+
+  if (
+    [
+      "COMPLETED",
+      "PROCESSING"
+    ].includes(request.status)
+  ) {
+    return ctx.reply(
+      "❌ This request can no longer be cancelled."
+    );
+  }
+
+  request.status = "CANCELLED";
+  request.updatedAt = now();
+
+  saveRequest(
+    request.id,
+    request
+  );
+
+  return ctx.reply(
+`❌ Rᴇǫᴜᴇsᴛ Cᴀɴᴄᴇʟʟᴇᴅ
+
+🆔 ${request.id}
+
+The request has been cancelled.`
+  );
+}
+
+// ==================================================
+// OWNER CHECK
+// ==================================================
+
+async function ownerOnly(ctx) {
+  if (!isOwner(ctx)) {
+    await ctx.reply(
+      "⛔ Oᴡɴᴇʀ Oɴʟʏ."
+    );
+
+    return false;
+  }
+
+  return true;
 }
 
 // ==================================================
 // OWNER PANEL
 // ==================================================
 
-function ownerPanelText() {
-  return `╭━━━〔 👑 Oᴡɴᴇʀ Pᴀɴᴇʟ 〕━━━╮
+async function ownerCommand(ctx) {
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-💳 Pᴀʏᴍᴇɴᴛ Mᴀɴᴀɢᴇᴍᴇɴᴛ
-📩 Rᴇǫᴜᴇsᴛ Rᴇᴠɪᴇᴡ
-💎 Pʀᴇᴍɪᴜᴍ Mᴀɴᴀɢᴇᴍᴇɴᴛ
-👥 Uѕᴇʀ Mᴀɴᴀɢᴇᴍᴇɴᴛ
-🛡️ Bᴀɴ Sʏsᴛᴇᴍ Cᴏɴᴛʀᴏʟ
-📊 Sʏsᴛᴇᴍ Sᴛᴀᴛᴜs
-📋 Aᴄᴛɪᴠɪᴛʏ Lᴏɢs
-⚙️ Sʏsᴛᴇᴍ Sᴇᴛᴛɪɴɢs
+  return ctx.reply(
+`👑 Oᴡɴᴇʀ Pᴀɴᴇʟ
 
-╰━━━━━━━━━━━━━━━━━━╯`;
-}
+📋 Rᴇǫᴜᴇsᴛs
+/requests
+/pending
+/approve REQUEST_ID
+/reject REQUEST_ID
 
-function ownerPanelButtons() {
-  return Markup.inlineKeyboard([
-    [
-      Markup.button.callback(
-        "💳 Pᴀʏᴍᴇɴᴛs",
-        "owner_payments"
-      ),
-      Markup.button.callback(
-        "📩 Rᴇǫᴜᴇsᴛs",
-        "owner_requests"
-      )
-    ],
-    [
-      Markup.button.callback(
-        "💎 Pʀᴇᴍɪᴜᴍ",
-        "owner_premium"
-      ),
-      Markup.button.callback(
-        "👥 Uѕᴇʀs",
-        "owner_users"
-      )
-    ],
-    [
-      Markup.button.callback(
-        "🛡️ Bᴀɴ Sʏsᴛᴇᴍ",
-        "owner_ban_control"
-      ),
-      Markup.button.callback(
-        "📊 Sᴛᴀᴛᴜs",
-        "owner_status"
-      )
-    ],
-    [
-      Markup.button.callback(
-        "📋 Lᴏɢs",
-        "owner_logs"
-      ),
-      Markup.button.callback(
-        "⚙️ Sᴇᴛᴛɪɴɢs",
-        "owner_settings"
-      )
-    ],
-    [
-      Markup.button.callback(
-        "🏠 Mᴀɪɴ Mᴇɴᴜ",
-        "back_home"
-      )
-    ]
-  ]);
+💳 Pᴀʏᴍᴇɴᴛs
+/payments
+/paymentinfo ID
+
+👥 Uѕᴇʀs
+/users
+/userinfo USER_ID
+
+💎 Pʀᴇᴍɪᴜᴍ
+/premium USER_ID
+/premiumoff USER_ID
+/premiuminfo USER_ID
+/premiumusers
+
+💰 Wᴀʟʟᴇᴛ
+/credit USER_ID AMOUNT
+/debit USER_ID AMOUNT
+
+📊 Sʏsᴛᴇᴍ
+/stats
+/logs`
+  );
 }
 
 // ==================================================
-// REQUEST BUTTONS
+// REQUESTS
 // ==================================================
 
-function requestButtons(requestId) {
-  return Markup.inlineKeyboard([
-    [
-      Markup.button.callback(
-        "✅ Aᴘᴘʀᴏᴠᴇ",
-        `approve_request:${requestId}`
-      ),
-      Markup.button.callback(
-        "❌ Rᴇᴊᴇᴄᴛ",
-        `reject_request:${requestId}`
-      )
-    ]
-  ]);
+async function requestsCommand(ctx) {
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
+
+  const requests =
+    getPendingRequests() || [];
+
+  if (!requests.length) {
+    return ctx.reply(
+      "📋 No pending requests."
+    );
+  }
+
+  let text =
+    "👑 Pᴇɴᴅɪɴɢ Rᴇǫᴜᴇsᴛs\n\n";
+
+  for (const request of requests) {
+    text +=
+`🆔 ${request.id}
+👤 ${request.username || request.userId}
+🛡️ ${request.service}
+🎯 ${request.target}
+📊 ${getReportCount(request)}/5
+💰 ${money(request.price)}
+📌 ${request.status}
+
+━━━━━━━━━━━━━━━━━━
+`;
+  }
+
+  return ctx.reply(text);
+}
+
+async function pendingCommand(ctx) {
+  return requestsCommand(ctx);
 }
 
 // ==================================================
-// PAYMENT TEXT
+// APPROVE
 // ==================================================
 
-function paymentText(service) {
-  return `╭━━━〔 💳 Pᴀʏᴍᴇɴᴛ 〕━━━╮
+async function approveCommand(ctx) {
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-🛡️ Sᴇʀᴠɪᴄᴇ:
-${service.name}
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-💰 Aᴍᴏᴜɴᴛ: ₦${service.price}
+  const requestId = args[1];
 
-━━━━━━━━━━━━━━━━━━━━
+  if (!requestId) {
+    return ctx.reply(
+      "❌ Usage:\n/approve REQUEST_ID"
+    );
+  }
 
-🏦 Bᴀɴᴋ: ${config.payment.bankName}
-💳 Aᴄᴄᴏᴜɴᴛ: ${config.payment.accountNumber}
-👤 Nᴀᴍᴇ: ${config.payment.accountName}
+  const request =
+    getRequest(requestId);
 
-━━━━━━━━━━━━━━━━━━━━
+  if (!request) {
+    return ctx.reply(
+      "❌ Request not found."
+    );
+  }
 
-📸 Aғᴛᴇʀ Pᴀʏᴍᴇɴᴛ:
-Sᴇɴᴅ Yᴏᴜʀ Pᴀʏᴍᴇɴᴛ Sᴄʀᴇᴇɴsʜᴏᴛ.
+  if (
+    getReportCount(request) <
+    REQUIRED_REPORTS
+  ) {
+    return ctx.reply(
+`❌ Rᴇǫᴜᴇsᴛ Cᴀɴɴᴏᴛ Bᴇ Aᴘᴘʀᴏᴠᴇᴅ
 
-⚠️ Yᴏᴜʀ Rᴇǫᴜᴇsᴛ Wɪʟʟ Bᴇ Rᴇᴠɪᴇᴡᴇᴅ Bʏ Aɴ Oᴡɴᴇʀ.
+🆔 ${request.id}
 
-╰━━━━━━━━━━━━━━━━━━━━╯`;
+📊 Reports:
+${getReportCount(request)}/5
+
+The 5-report verification requirement
+has not been completed.`
+    );
+  }
+
+  const balance =
+    getBalance({
+      from: {
+        id: request.userId
+      }
+    });
+
+  if (
+    balance <
+    Number(request.price)
+  ) {
+    request.status =
+      "INSUFFICIENT_BALANCE";
+
+    saveRequest(
+      request.id,
+      request
+    );
+
+    return ctx.reply(
+`❌ Iɴsᴜғғɪᴄɪᴇɴᴛ Bᴀʟᴀɴᴄᴇ
+
+👤 User: ${request.username || request.userId}
+💰 Current: ${money(balance)}
+💵 Required: ${money(request.price)}
+📉 Missing: ${money(
+  request.price - balance
+)}`
+    );
+  }
+
+  changeBalance(
+    request.userId,
+    -Number(request.price)
+  );
+
+  request.status =
+    "PENDING_OWNER_APPROVAL";
+
+  request.approvedBy =
+    userId(ctx);
+
+  request.approvedAt =
+    now();
+
+  request.paymentStatus =
+    "APPROVED";
+
+  request.executionStatus =
+    "PROCESSING";
+
+  saveRequest(
+    request.id,
+    request
+  );
+
+  await ctx.reply(
+`✅ Rᴇǫᴜᴇsᴛ Aᴘᴘʀᴏᴠᴇᴅ
+
+🆔 ${request.id}
+📱 Target: ${request.target}
+
+🔋 Starting execution system...
+
+⚠️ The progress animation is only a
+visual processing indicator.`
+  );
+
+  await processApprovedRequest(
+    ctx,
+    request
+  );
 }
 
 // ==================================================
-// EXECUTE APPROVED REQUEST
+// EXECUTION ANIMATION
+// ==================================================
+
+async function progressAnimation(
+  ctx,
+  request
+) {
+  const message =
+    await ctx.telegram.sendMessage(
+      request.userId,
+`🛡️ Bᴀɴ Gᴜᴀʀᴅ
+
+📱 Target: ${request.target}
+🟡 Status: PROCESSING
+
+━━━━━━━━━━━━━━━━━━
+
+🔋 Sʏsᴛᴇᴍ Lᴏᴀᴅɪɴɢ...
+
+[░░░░░░░░░░] 1%
+
+⏳ Initializing...`
+    );
+
+  const stages = [
+    [20, "██░░░░░░░░"],
+    [40, "████░░░░░░"],
+    [60, "██████░░░░"],
+    [80, "████████░░"],
+    [100, "██████████"]
+  ];
+
+  for (const [percent, bar] of stages) {
+    await new Promise(
+      resolve =>
+        setTimeout(resolve, 500)
+    );
+
+    await ctx.telegram.editMessageText(
+      request.userId,
+      message.message_id,
+      undefined,
+`🛡️ Bᴀɴ Gᴜᴀʀᴅ
+
+📱 Target: ${request.target}
+🟡 Status: PROCESSING
+
+━━━━━━━━━━━━━━━━━━
+
+🔋 Sʏsᴛᴇᴍ Lᴏᴀᴅɪɴɢ...
+
+[${bar}] ${percent}%
+
+⏳ Processing...`
+    );
+  }
+
+  await new Promise(
+    resolve =>
+      setTimeout(resolve, 500)
+  );
+
+  await ctx.telegram.editMessageText(
+    request.userId,
+    message.message_id,
+    undefined,
+`⚡ Sʏsᴛᴇᴍ Rᴇᴀᴅʏ
+
+⚡ Bᴀɴ Eɴɢɪɴᴇ
+
+🔄 Executing authorized action...
+
+📱 Target: ${request.target}`
+  );
+
+  return message;
+}
+
+// ==================================================
+// PROCESS APPROVED REQUEST
 // ==================================================
 
 async function processApprovedRequest(
-  bot,
-  request,
-  ownerId
+  ctx,
+  request
 ) {
   try {
-    // ------------------------------------------------
-    // Only services currently implemented in
-    // services/banService.js are executed automatically.
-    // ------------------------------------------------
+    await progressAnimation(
+      ctx,
+      request
+    );
 
-    const executableServices = [
-      "whatsapp_ban",
-      "whatsapp_unban"
-    ];
-
-    if (!executableServices.includes(request.service)) {
-      saveRequest(request.id, {
-        status: "APPROVED",
-        executionStatus: "NOT_IMPLEMENTED"
-      });
-
-      addLog({
-        action: "REQUEST_APPROVED_NOT_EXECUTED",
-        ownerId: String(ownerId),
-        userId: request.userId,
-        requestId: request.id,
-        service: request.service
-      });
-
-      await bot.telegram.sendMessage(
-        request.userId,
-        `╭━━━〔 ⚠️ Rᴇǫᴜᴇsᴛ Aᴘᴘʀᴏᴠᴇᴅ 〕━━━╮
-
-🆔 ${request.id}
-
-🛠️ ${request.serviceName}
-
-👑 Oᴡɴᴇʀ: Aᴘᴘʀᴏᴠᴇᴅ
-
-⏳ E xᴇᴄᴜᴛɪᴏɴ:
-Nᴏᴛ Yᴇᴛ Aᴠᴀɪʟᴀʙʟᴇ Fᴏʀ Tʜɪs Sᴇʀᴠɪᴄᴇ.
-
-╰━━━━━━━━━━━━━━━━━━━━╯`
+    const result =
+      await executeBanRequest(
+        request
       );
 
-      return {
-        success: false,
-        executed: false,
-        reason: "SERVICE_NOT_IMPLEMENTED"
-      };
+    request.status =
+      "COMPLETED";
+
+    request.executionStatus =
+      "EXECUTED";
+
+    request.completedAt =
+      now();
+
+    saveRequest(
+      request.id,
+      request
+    );
+
+    // ----------------------------------------------
+    // SAVE BAN GUARD RECORD
+    // ----------------------------------------------
+
+    if (
+      request.service ===
+      "whatsapp_ban"
+    ) {
+      saveBan(
+        request.target,
+        {
+          phone: request.target,
+          status: "BANNED",
+          reason: request.reason,
+          type: "Permanent",
+          banAt: now(),
+          requestId: request.id
+        }
+      );
     }
 
-    // ------------------------------------------------
-    // Mark execution as processing
-    // ------------------------------------------------
+    if (
+      request.service ===
+      "whatsapp_unban"
+    ) {
+      saveBan(
+        request.target,
+        {
+          phone: request.target,
+          status: "UNBANNED",
+          reason: request.reason,
+          type: "Permanent Unban",
+          banAt:
+            request.banRecord?.banAt ||
+            "Unknown",
+          unbanAt: now(),
+          requestId: request.id
+        }
+      );
+    }
 
-    saveRequest(request.id, {
-      status: "PROCESSING",
-      executionStatus: "PROCESSING",
-      executionStartedAt: new Date().toISOString(),
-      executionStartedBy: String(ownerId)
-    });
-
-    addLog({
-      action: "REQUEST_EXECUTION_STARTED",
-      ownerId: String(ownerId),
-      userId: request.userId,
-      requestId: request.id,
-      service: request.service,
-      target: request.target
-    });
-
-    // ------------------------------------------------
-    // Execute through service layer
-    // ------------------------------------------------
-
-    const result = await executeBanRequest(request);
-
-    // ------------------------------------------------
-    // Save ban/action record
-    // ------------------------------------------------
-
-    saveBan(request.id, {
-      requestId: request.id,
-      userId: request.userId,
-      service: request.service,
-      serviceName: request.serviceName,
-      target: request.target,
-      reason: request.reason,
-      action: result.action,
-      jid: result.jid || null,
-      executedBy: String(ownerId),
-      status: "SUCCESS",
-      createdAt: new Date().toISOString()
-    });
-
-    // ------------------------------------------------
-    // Mark request completed
-    // ------------------------------------------------
-
-    saveRequest(request.id, {
-      status: "COMPLETED",
-      executionStatus: "SUCCESS",
-      executionResult: result,
-      completedAt: new Date().toISOString(),
-      completedBy: String(ownerId)
-    });
-
-    addLog({
-      action: "REQUEST_EXECUTED_SUCCESSFULLY",
-      ownerId: String(ownerId),
-      userId: request.userId,
-      requestId: request.id,
-      service: request.service,
-      target: request.target
-    });
-
-    // ------------------------------------------------
-    // Notify owner
-    // ------------------------------------------------
-
-    await bot.telegram.sendMessage(
-      ownerId,
-      `╭━━━〔 ✅ E xᴇᴄᴜᴛɪᴏɴ Sᴜᴄᴄᴇss 〕━━━╮
-
-🆔 ${request.id}
-
-🛠️ ${request.serviceName}
-
-🎯 Tᴀʀɢᴇᴛ:
-${request.target}
-
-⚡ Aᴄᴛɪᴏɴ:
-${result.action}
-
-📊 Sᴛᴀᴛᴜs:
-Sᴜᴄᴄᴇss
-
-╰━━━━━━━━━━━━━━━━━━━━╯`
+    addLog(
+      "REQUEST_COMPLETED",
+      {
+        requestId: request.id,
+        userId: request.userId,
+        service: request.service,
+        target: request.target,
+        ownerId: request.approvedBy
+      }
     );
 
-    // ------------------------------------------------
-    // Notify customer
-    // ------------------------------------------------
+    const finalStatus =
+      request.service ===
+      "whatsapp_unban"
+        ? "🟢 Status: UNBANNED"
+        : "🔴 Status: BANNED";
 
-    await bot.telegram.sendMessage(
+    const title =
+      request.service ===
+      "whatsapp_unban"
+        ? "✅ Uɴʙᴀɴ Exᴇᴄᴜᴛᴇᴅ"
+        : "✅ Bᴀɴ Exᴇᴄᴜᴛᴇᴅ";
+
+    await ctx.telegram.sendMessage(
       request.userId,
-      `╭━━━〔 ✅ Rᴇǫᴜᴇsᴛ Cᴏᴍᴘʟᴇᴛᴇᴅ 〕━━━╮
+`${title}
 
-🆔 ${request.id}
+━━━━━━━━━━━━━━━━━━
 
-🛠️ ${request.serviceName}
+📱 Phone: ${request.target}
+${finalStatus}
+📝 Reason: ${request.reason || "Not provided"}
+⏳ Type: ${
+  request.service === "whatsapp_unban"
+    ? "Permanent Unban"
+    : "Permanent"
+}
+🕐 ${
+  request.service === "whatsapp_unban"
+    ? `Ban at: ${
+        request.banRecord?.banAt ||
+        "Unknown"
+      }\n🕐 Unban at: ${request.completedAt}`
+    : `Ban at: ${request.completedAt}`
+}
 
-🎯 Tᴀʀɢᴇᴛ:
-${request.target}
+━━━━━━━━━━━━━━━━━━
 
-⚡ Aᴄᴛɪᴏɴ:
-${result.action}
-
-📊 Sᴛᴀᴛᴜs:
-Sᴜᴄᴄᴇssғᴜʟ
-
-╰━━━━━━━━━━━━━━━━━━━━╯`
+🛡️ Bᴀɴ Gᴜᴀʀᴅ`
     );
 
-    return {
-      success: true,
-      executed: true,
-      result
-    };
+    await ctx.reply(
+`✅ Exᴇᴄᴜᴛɪᴏɴ Cᴏᴍᴘʟᴇᴛᴇ
+
+🆔 ${request.id}
+📱 ${request.target}
+
+⚡ Action completed successfully.`
+    );
 
   } catch (error) {
-
     console.error(
-      `❌ Execution failed for ${request.id}:`,
+      "❌ Request execution error:",
       error
     );
 
-    // ------------------------------------------------
-    // Save failed execution
-    // ------------------------------------------------
+    request.status =
+      "EXECUTION_FAILED";
 
-    saveRequest(request.id, {
-      status: "EXECUTION_FAILED",
-      executionStatus: "FAILED",
-      executionError: error.message,
-      failedAt: new Date().toISOString()
-    });
+    request.executionStatus =
+      "FAILED";
 
-    addLog({
-      action: "REQUEST_EXECUTION_FAILED",
-      ownerId: String(ownerId),
-      userId: request.userId,
-      requestId: request.id,
-      service: request.service,
-      target: request.target,
-      error: error.message
-    });
+    request.error =
+      error.message;
 
-    // ------------------------------------------------
-    // Notify owner
-    // ------------------------------------------------
+    request.failedAt =
+      now();
 
-    try {
-      await bot.telegram.sendMessage(
-        ownerId,
-        `╭━━━〔 ❌ E xᴇᴄᴜᴛɪᴏɴ Fᴀɪʟᴇᴅ 〕━━━╮
+    saveRequest(
+      request.id,
+      request
+    );
 
-🆔 ${request.id}
+    // ----------------------------------------------
+    // REFUND
+    // ----------------------------------------------
 
-🛠️ ${request.serviceName}
+    changeBalance(
+      request.userId,
+      Number(request.price)
+    );
 
-🎯 Tᴀʀɢᴇᴛ:
-${request.target}
+    await ctx.telegram.sendMessage(
+      request.userId,
+`❌ Eɴɢɪɴᴇ Exᴇᴄᴜᴛɪᴏɴ Fᴀɪʟᴇᴅ
 
-❌ Eʀʀᴏʀ:
-${error.message}
+🆔 Request: ${request.id}
 
-╰━━━━━━━━━━━━━━━━━━━━╯`
-      );
-    } catch (ownerError) {
-      console.error(
-        "❌ Failed notifying owner:",
-        ownerError.message
-      );
-    }
+⚠️ ${error.message}
 
-    // ------------------------------------------------
-    // Notify customer
-    // ------------------------------------------------
+💰 Your reserved balance has been
+returned.`
+    );
 
-    try {
-      await bot.telegram.sendMessage(
-        request.userId,
-        `╭━━━〔 ❌ E xᴇᴄᴜᴛɪᴏɴ Fᴀɪʟᴇᴅ 〕━━━╮
+    await ctx.reply(
+`❌ Exᴇᴄᴜᴛɪᴏɴ Fᴀɪʟᴇᴅ
 
 🆔 ${request.id}
 
-🛠️ ${request.serviceName}
-
-⚠️ Tʜᴇ Rᴇǫᴜᴇsᴛ Cᴏᴜʟᴅ Nᴏᴛ Bᴇ Cᴏᴍᴘʟᴇᴛᴇᴅ.
-
-👑 Tʜᴇ Oᴡɴᴇʀ Hᴀs Bᴇᴇɴ Nᴏᴛɪғɪᴇᴅ.
-
-╰━━━━━━━━━━━━━━━━━━━━╯`
-      );
-    } catch (notifyError) {
-      console.error(
-        "❌ Failed notifying customer:",
-        notifyError.message
-      );
-    }
-
-    return {
-      success: false,
-      executed: false,
-      error: error.message
-    };
+${error.message}`
+    );
   }
 }
 
 // ==================================================
-// REGISTER HANDLERS
+// REJECT
+// ==================================================
+
+async function rejectCommand(ctx) {
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
+
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
+
+  const requestId = args[1];
+
+  if (!requestId) {
+    return ctx.reply(
+      "❌ Usage:\n/reject REQUEST_ID"
+    );
+  }
+
+  const request =
+    getRequest(requestId);
+
+  if (!request) {
+    return ctx.reply(
+      "❌ Request not found."
+    );
+  }
+
+  request.status =
+    "REJECTED";
+
+  request.rejectedBy =
+    userId(ctx);
+
+  request.rejectedAt =
+    now();
+
+  saveRequest(
+    request.id,
+    request
+  );
+
+  await ctx.telegram.sendMessage(
+    request.userId,
+`❌ Rᴇǫᴜᴇsᴛ Rᴇᴊᴇᴄᴛᴇᴅ
+
+🆔 ${request.id}
+📱 Target: ${request.target}
+
+👑 The owner rejected your request.`
+  );
+
+  return ctx.reply(
+`❌ Rᴇǫᴜᴇsᴛ Rᴇᴊᴇᴄᴛᴇᴅ
+
+🆔 ${request.id}`
+  );
+}
+
+// ==================================================
+// PREMIUM
+// ==================================================
+
+async function premiumCommand(ctx) {
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
+
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
+
+  const targetId = args[1];
+
+  if (!targetId || !/^\d+$/.test(targetId)) {
+    return ctx.reply(
+      "❌ Usage:\n/premium USER_ID"
+    );
+  }
+
+  setPremium(
+    targetId,
+    true
+  );
+
+  return ctx.reply(
+`💎 Pʀᴇᴍɪᴜᴍ Gʀᴀɴᴛᴇᴅ
+
+👤 User ID: ${targetId}
+💎 Status: PREMIUM
+💰 Price: FREE
+👑 Granted by: Owner
+
+✅ Premium access activated.`
+  );
+}
+
+async function premiumOffCommand(ctx) {
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
+
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
+
+  const targetId = args[1];
+
+  if (!targetId || !/^\d+$/.test(targetId)) {
+    return ctx.reply(
+      "❌ Usage:\n/premiumoff USER_ID"
+    );
+  }
+
+  setPremium(
+    targetId,
+    false
+  );
+
+  return ctx.reply(
+`🔴 Pʀᴇᴍɪᴜᴍ Rᴇᴍᴏᴠᴇᴅ
+
+👤 User ID: ${targetId}
+💎 Status: STANDARD`
+  );
+}
+
+async function premiumInfoCommand(ctx) {
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
+
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
+
+  const targetId = args[1];
+
+  if (!targetId) {
+    return ctx.reply(
+      "❌ Usage:\n/premiuminfo USER_ID"
+    );
+  }
+
+  const user =
+    getUser(targetId);
+
+  return ctx.reply(
+`💎 Pʀᴇᴍɪᴜᴍ Iɴғᴏ
+
+🆔 User ID: ${targetId}
+👤 User: ${user?.username || "Unknown"}
+💎 Premium: ${
+  isPremium(targetId)
+    ? "YES"
+    : "NO"
+}
+💰 Balance: ${money(
+  user?.balance || 0
+)}`
+  );
+}
+
+async function premiumUsersCommand(ctx) {
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
+
+  // Database structure may contain users as an object.
+  const database =
+    require("../database/database")
+      .readDatabase();
+
+  const users =
+    database?.users || {};
+
+  const premium =
+    Object.values(users).filter(
+      user =>
+        user?.premium === true ||
+        user?.isPremium === true
+    );
+
+  if (!premium.length) {
+    return ctx.reply(
+      "💎 No Premium users found."
+    );
+  }
+
+  let text =
+    "💎 Pʀᴇᴍɪᴜᴍ Uѕᴇʀs\n\n";
+
+  for (const user of premium) {
+    text +=
+`👤 ${user.username || "User"}
+🆔 ${user.id}
+━━━━━━━━━━━━━━━━━━
+`;
+  }
+
+  return ctx.reply(text);
+}
+
+// ==================================================
+// CREDIT
+// ==================================================
+
+async function creditCommand(ctx) {
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
+
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
+
+  const targetId = args[1];
+  const amount = Number(args[2]);
+
+  if (
+    !targetId ||
+    !amount ||
+    amount <= 0
+  ) {
+    return ctx.reply(
+      "❌ Usage:\n/credit USER_ID AMOUNT"
+    );
+  }
+
+  const balance =
+    changeBalance(
+      targetId,
+      amount
+    );
+
+  return ctx.reply(
+`💰 Bᴀʟᴀɴᴄᴇ Cʀᴇᴅɪᴛᴇᴅ
+
+👤 User ID: ${targetId}
+➕ Added: ${money(amount)}
+💵 New Balance: ${money(balance)}`
+  );
+}
+
+// ==================================================
+// DEBIT
+// ==================================================
+
+async function debitCommand(ctx) {
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
+
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
+
+  const targetId = args[1];
+  const amount = Number(args[2]);
+
+  if (
+    !targetId ||
+    !amount ||
+    amount <= 0
+  ) {
+    return ctx.reply(
+      "❌ Usage:\n/debit USER_ID AMOUNT"
+    );
+  }
+
+  const user =
+    getUser(targetId) || {
+      id: targetId,
+      balance: 0
+    };
+
+  if (
+    Number(user.balance || 0) <
+    amount
+  ) {
+    return ctx.reply(
+      "❌ User does not have enough balance."
+    );
+  }
+
+  const balance =
+    changeBalance(
+      targetId,
+      -amount
+    );
+
+  return ctx.reply(
+`💰 Bᴀʟᴀɴᴄᴇ Dᴇʙɪᴛᴇᴅ
+
+👤 User ID: ${targetId}
+➖ Removed: ${money(amount)}
+💵 New Balance: ${money(balance)}`
+  );
+}
+
+// ==================================================
+// USERS
+// ==================================================
+
+async function usersCommand(ctx) {
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
+
+  const database =
+    require("../database/database")
+      .readDatabase();
+
+  const users =
+    Object.values(
+      database?.users || {}
+    );
+
+  return ctx.reply(
+`👥 Uѕᴇʀ Sᴛᴀᴛɪsᴛɪᴄs
+
+👤 Total Users: ${users.length}
+
+💎 Premium Users: ${
+  users.filter(
+    u =>
+      u?.premium === true ||
+      u?.isPremium === true
+  ).length
+}`
+  );
+}
+
+// ==================================================
+// USER INFO
+// ==================================================
+
+async function userInfoCommand(ctx) {
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
+
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
+
+  const targetId = args[1];
+
+  if (!targetId) {
+    return ctx.reply(
+      "❌ Usage:\n/userinfo USER_ID"
+    );
+  }
+
+  const user =
+    getUser(targetId);
+
+  if (!user) {
+    return ctx.reply(
+      "❌ User not found."
+    );
+  }
+
+  return ctx.reply(
+`👤 Uѕᴇʀ Iɴғᴏ
+
+🆔 ID: ${targetId}
+👤 Username: ${user.username || "Unknown"}
+💰 Balance: ${money(user.balance)}
+💎 Premium: ${
+  isPremium(targetId)
+    ? "YES"
+    : "NO"
+}`
+  );
+}
+
+// ==================================================
+// STATS
+// ==================================================
+
+async function statsCommand(ctx) {
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
+
+  const database =
+    require("../database/database")
+      .readDatabase();
+
+  const users =
+    Object.values(
+      database?.users || {}
+    );
+
+  const requests =
+    Object.values(
+      database?.requests || {}
+    );
+
+  return ctx.reply(
+`📊 Bᴀɴ Sʏsᴛᴇᴍ Sᴛᴀᴛs
+
+👥 Users: ${users.length}
+📋 Requests: ${requests.length}
+
+⏳ Pending:
+${
+  requests.filter(
+    r =>
+      ![
+        "COMPLETED",
+        "REJECTED",
+        "CANCELLED"
+      ].includes(r.status)
+  ).length
+}
+
+✅ Completed:
+${
+  requests.filter(
+    r =>
+      r.status === "COMPLETED"
+  ).length
+}
+
+❌ Rejected:
+${
+  requests.filter(
+    r =>
+      r.status === "REJECTED"
+  ).length
+}`
+  );
+}
+
+// ==================================================
+// SERVICES
+// ==================================================
+
+async function servicesCommand(ctx) {
+  return ctx.reply(
+`🛡️ Sᴇʀᴠɪᴄᴇs
+
+📱 WʜᴀᴛsAᴘᴘ
+
+/ban PHONE
+/unban PHONE
+
+/bangroup GROUP_LINK
+/unbangroup GROUP_LINK
+
+/banchannel CHANNEL_LINK
+/unbanchannel CHANNEL_LINK
+
+✈️ Tᴇʟᴇɢʀᴀᴍ
+
+/tgban USER_ID
+/tgunban USER_ID
+
+/tggroupban GROUP_ID
+/tggroupunban GROUP_ID
+
+/tgchannelban CHANNEL_ID
+/tgchannelunban CHANNEL_ID
+
+━━━━━━━━━━━━━━━━━━
+
+⚠️ Requests require verification,
+payment/balance and owner approval.`
+  );
+}
+
+// ==================================================
+// PRICE
+// ==================================================
+
+async function priceCommand(ctx) {
+  return ctx.reply(
+`💰 Pʀɪᴄɪɴɢ
+
+👤 User Ban:
+${money(config.prices.userBan)}
+
+🔓 User Unban:
+${money(config.prices.userUnban)}
+
+👥 Group/Channel Ban:
+${money(config.prices.groupChannelBan)}
+
+🔓 Group/Channel Unban:
+${money(config.prices.groupChannelUnban)}
+
+🎁 Referral Reward:
+${money(config.referral.reward)}`
+  );
+}
+
+// ==================================================
+// REGISTER
 // ==================================================
 
 function registerHandlers(bot) {
 
-  // ==================================================
-  // START
-  // ==================================================
+  // ----------------------------------------------
+  // USER
+  // ----------------------------------------------
 
-  bot.start(async (ctx) => {
-    try {
-      const userId = String(ctx.from.id);
+  bot.start(startCommand);
 
-      saveUser(userId, {
-        userId,
-        username: ctx.from.username || null,
-        firstName: ctx.from.first_name || null,
-        lastName: ctx.from.last_name || null
-      });
-
-      const forceJoin = await checkForceJoin(
-        bot,
-        userId
-      );
-
-      if (!forceJoin.joined) {
-        return ctx.reply(
-          `╭━━━〔 📢 Jᴏɪɴ Rᴇǫᴜɪʀᴇᴍᴇɴᴛ 〕━━━╮
-
-👋 Hᴇʟʟᴏ ${ctx.from.first_name || "User"}!
-
-⚠️ Pʟᴇᴀsᴇ Jᴏɪɴ Tʜᴇ Cʜᴀɴɴᴇʟs Bᴇʟᴏᴡ Tᴏ Cᴏɴᴛɪɴᴜᴇ.
-
-╰━━━━━━━━━━━━━━━━━━━━╯`,
-          {
-            reply_markup:
-              forceJoinKeyboard(
-                forceJoin.notJoined
-              )
-          }
-        );
-      }
-
-      await ctx.reply(
-        getStartMenu(ctx),
-        startButtons()
-      );
-
-    } catch (error) {
-      console.error(
-        "❌ /start error:",
-        error
-      );
-
-      await ctx.reply(
-        "❌ Aɴ Eʀʀᴏʀ Oᴄᴄᴜʀʀᴇᴅ."
-      );
-    }
-  });
-
-  // ==================================================
-  // FORCE JOIN
-  // ==================================================
-
-  bot.action(
-    "check_force_join",
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        const result =
-          await checkForceJoin(
-            bot,
-            String(ctx.from.id)
-          );
-
-        if (!result.joined) {
-          return ctx.reply(
-            "❌ Yᴏᴜ Hᴀᴠᴇ Nᴏᴛ Jᴏɪɴᴇᴅ Aʟʟ Rᴇǫᴜɪʀᴇᴅ Cʜᴀɴɴᴇʟs.",
-            {
-              reply_markup:
-                forceJoinKeyboard(
-                  result.notJoined
-                )
-            }
-          );
-        }
-
-        await ctx.reply(
-          getStartMenu(ctx),
-          startButtons()
-        );
-
-      } catch (error) {
-        console.error(
-          "❌ Force join error:",
-          error
-        );
-
-        await ctx.reply(
-          "❌ Fᴀɪʟᴇᴅ Tᴏ Cʜᴇᴄᴋ Jᴏɪɴ Sᴛᴀᴛᴜs."
-        );
-      }
-    }
+  bot.command(
+    "help",
+    helpCommand
   );
 
-  // ==================================================
-  // HOME
-  // ==================================================
-
-  bot.action(
-    "back_home",
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        await ctx.reply(
-          getStartMenu(ctx),
-          startButtons()
-        );
-
-      } catch (error) {
-        console.error(
-          "❌ Home error:",
-          error
-        );
-      }
-    }
+  bot.command(
+    "menu",
+    startCommand
   );
 
-  // ==================================================
-  // SERVICES
-  // ==================================================
-
-  for (
-    const [action, service]
-    of Object.entries(SERVICES)
-  ) {
-
-    bot.action(
-      action,
-      async (ctx) => {
-        try {
-          await ctx.answerCbQuery();
-
-          const requestId =
-            generateRequestId();
-
-          saveRequest(requestId, {
-            userId: String(ctx.from.id),
-            username:
-              ctx.from.username || null,
-            service: action,
-            serviceName: service.name,
-            price: service.price,
-            status: "TARGET_PENDING",
-            target: null,
-            reason: null
-          });
-
-          await ctx.reply(
-            `╭━━━〔 🛡️ Nᴇᴡ Rᴇǫᴜᴇsᴛ 〕━━━╮
-
-🆔 Rᴇǫᴜᴇsᴛ: ${requestId}
-
-🛠️ Sᴇʀᴠɪᴄᴇ:
-${service.name}
-
-💰 Pʀɪᴄᴇ: ₦${service.price}
-
-━━━━━━━━━━━━━━━━━━━━
-
-🎯 Sᴇɴᴅ Tʜᴇ Tᴀʀɢᴇᴛ.
-
-E.g:
-• Phone number
-• Telegram username
-• Group ID
-• Channel username
-• Bot username
-
-╰━━━━━━━━━━━━━━━━━━━━╯`
-          );
-
-        } catch (error) {
-          console.error(
-            `❌ ${action} error:`,
-            error
-          );
-        }
-      }
-    );
-  }
-
-  // ==================================================
-  // PAYMENT
-  // ==================================================
-
-  bot.action(
-    "payment",
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        await ctx.reply(
-          `╭━━━〔 💳 Pᴀʏᴍᴇɴᴛ 〕━━━╮
-
-🏦 Bᴀɴᴋ: ${config.payment.bankName}
-💳 Aᴄᴄᴏᴜɴᴛ: ${config.payment.accountNumber}
-👤 Nᴀᴍᴇ: ${config.payment.accountName}
-
-━━━━━━━━━━━━━━━━━━━━
-
-💰 Pʀɪᴄᴇs
-
-👤 Uѕᴇʀ Bᴀɴ: ₦${config.prices.userBan}
-🔓 Uѕᴇʀ Uɴʙᴀɴ: ₦${config.prices.userUnban}
-
-👥 Gʀᴏᴜᴘ/Cʜᴀɴɴᴇʟ Bᴀɴ:
-₦${config.prices.groupChannelBan}
-
-🔓 Gʀᴏᴜᴘ/Cʜᴀɴɴᴇʟ Uɴʙᴀɴ:
-₦${config.prices.groupChannelUnban}
-
-━━━━━━━━━━━━━━━━━━━━
-
-📸 Pᴀʏ Fɪʀsᴛ,
-Tʜᴇɴ Sᴇɴᴅ Yᴏᴜʀ Pʀᴏᴏғ.
-
-╰━━━━━━━━━━━━━━━━━━━━╯`
-        );
-
-      } catch (error) {
-        console.error(
-          "❌ Payment error:",
-          error
-        );
-      }
-    }
+  bot.command(
+    "profile",
+    profileCommand
   );
 
-  // ==================================================
-  // REFERRAL
-  // ==================================================
-
-  bot.action(
-    "referral",
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        const botUsername =
-          ctx.botInfo?.username ||
-          "YOUR_BOT";
-
-        const link =
-          `https://t.me/${botUsername}?start=ref_${ctx.from.id}`;
-
-        await ctx.reply(
-          `╭━━━〔 🎁 Rᴇғᴇʀʀᴀʟ 〕━━━╮
-
-💰 Rᴇᴡᴀʀᴅ: ₦${config.referral.reward}
-
-👥 Iɴᴠɪᴛᴇ Nᴇᴡ Uѕᴇʀs Tᴏ Tʜᴇ Bᴏᴛ.
-
-🔗 Yᴏᴜʀ Rᴇғᴇʀʀᴀʟ Lɪɴᴋ:
-
-${link}
-
-━━━━━━━━━━━━━━━━━━━━
-
-⚠️ Rᴇᴡᴀʀᴅ Iѕ Gɪᴠᴇɴ Fᴏʀ Sᴜᴄᴄᴇssғᴜʟ Rᴇғᴇʀʀᴀʟs.
-
-╰━━━━━━━━━━━━━━━━━━━━╯`
-        );
-
-      } catch (error) {
-        console.error(
-          "❌ Referral error:",
-          error
-        );
-      }
-    }
+  bot.command(
+    "id",
+    idCommand
   );
 
-  // ==================================================
-  // MY REQUESTS
-  // ==================================================
-
-  bot.action(
-    "my_requests",
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        const requests =
-          getUserRequests(ctx.from.id);
-
-        if (!requests.length) {
-          return ctx.reply(
-            `╭━━━〔 📩 Mʏ Rᴇǫᴜᴇsᴛs 〕━━━╮
-
-❌ Yᴏᴜ Hᴀᴠᴇ Nᴏ Rᴇǫᴜᴇsᴛs Yᴇᴛ.
-
-╰━━━━━━━━━━━━━━━━━━━━╯`
-          );
-        }
-
-        const recent =
-          requests
-            .slice(-10)
-            .reverse();
-
-        let text =
-          `╭━━━〔 📩 Mʏ Rᴇǫᴜᴇsᴛs 〕━━━╮\n\n`;
-
-        for (const request of recent) {
-          text +=
-            `🆔 ${request.id}\n` +
-            `🛠️ ${request.serviceName}\n` +
-            `💰 ₦${request.price}\n` +
-            `📊 ${request.status}\n\n`;
-        }
-
-        text +=
-          "╰━━━━━━━━━━━━━━━━━━━━╯";
-
-        await ctx.reply(text);
-
-      } catch (error) {
-        console.error(
-          "❌ My requests error:",
-          error
-        );
-      }
-    }
+  bot.command(
+    "balance",
+    balanceCommand
   );
 
-  // ==================================================
-  // ADMIN PANEL
-  // ==================================================
-
-  bot.action(
-    "admin_panel",
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        if (!isOwner(ctx.from.id)) {
-          return ctx.reply(
-            "❌ Aᴄᴄᴇss Dᴇɴɪᴇᴅ."
-          );
-        }
-
-        await ctx.reply(
-          ownerPanelText(),
-          ownerPanelButtons()
-        );
-
-      } catch (error) {
-        console.error(
-          "❌ Admin panel error:",
-          error
-        );
-      }
-    }
+  bot.command(
+    "deposit",
+    depositCommand
   );
 
-  // ==================================================
-  // OWNER PANEL
-  // ==================================================
-
-  bot.action(
-    "owner_panel",
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        if (!isOwner(ctx.from.id)) {
-          return ctx.reply(
-            "❌ Oɴʟʏ Aᴜᴛʜᴏʀɪᴢᴇᴅ Oᴡɴᴇʀs Cᴀɴ Aᴄᴄᴇss Tʜɪs."
-          );
-        }
-
-        await ctx.reply(
-          ownerPanelText(),
-          ownerPanelButtons()
-        );
-
-      } catch (error) {
-        console.error(
-          "❌ Owner panel error:",
-          error
-        );
-      }
-    }
+  bot.command(
+    "ban",
+    banCommand
   );
 
-  // ==================================================
-  // OWNER REQUESTS
-  // ==================================================
-
-  bot.action(
-    "owner_requests",
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        if (!isOwner(ctx.from.id)) {
-          return ctx.reply(
-            "❌ Aᴄᴄᴇss Dᴇɴɪᴇᴅ."
-          );
-        }
-
-        const requests =
-          getPendingRequests();
-
-        if (!requests.length) {
-          return ctx.reply(
-            `╭━━━〔 📩 Pᴇɴᴅɪɴɢ Rᴇǫᴜᴇsᴛs 〕━━━╮
-
-✅ Nᴏ Pᴇɴᴅɪɴɢ Rᴇǫᴜᴇsᴛs.
-
-╰━━━━━━━━━━━━━━━━━━━━╯`
-          );
-        }
-
-        for (
-          const request
-          of requests.slice(0, 20)
-        ) {
-          await ctx.reply(
-            `╭━━━〔 📩 Rᴇǫᴜᴇsᴛ 〕━━━╮
-
-🆔 ${request.id}
-
-👤 Uѕᴇʀ:
-${request.userId}
-
-🛠️ Sᴇʀᴠɪᴄᴇ:
-${request.serviceName}
-
-🎯 Tᴀʀɢᴇᴛ:
-${request.target || "Not provided"}
-
-📝 Rᴇᴀsᴏɴ:
-${request.reason || "Not provided"}
-
-💰 Aᴍᴏᴜɴᴛ:
-₦${request.price}
-
-📊 Sᴛᴀᴛᴜs:
-${request.status}
-
-╰━━━━━━━━━━━━━━━━━━━━╯`,
-            requestButtons(request.id)
-          );
-        }
-
-      } catch (error) {
-        console.error(
-          "❌ Owner requests error:",
-          error
-        );
-      }
-    }
+  bot.command(
+    "unban",
+    unbanCommand
   );
 
-  // ==================================================
-  // OWNER PAYMENTS
-  // ==================================================
-
-  bot.action(
-    "owner_payments",
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        if (!isOwner(ctx.from.id)) {
-          return ctx.reply(
-            "❌ Aᴄᴄᴇss Dᴇɴɪᴇᴅ."
-          );
-        }
-
-        const data =
-          readDatabase();
-
-        const payments =
-          Object.values(
-            data.payments
-          );
-
-        if (!payments.length) {
-          return ctx.reply(
-            "💳 Nᴏ Pᴀʏᴍᴇɴᴛ Rᴇᴄᴏʀᴅs Fᴏᴜɴᴅ."
-          );
-        }
-
-        let text =
-          `╭━━━〔 💳 Pᴀʏᴍᴇɴᴛs 〕━━━╮\n\n`;
-
-        for (
-          const payment
-          of payments
-            .slice(-20)
-            .reverse()
-        ) {
-          text +=
-            `🆔 ${payment.id}\n` +
-            `👤 ${payment.userId}\n` +
-            `💰 ₦${payment.amount || 0}\n` +
-            `📊 ${payment.status || "PENDING"}\n\n`;
-        }
-
-        text +=
-          "╰━━━━━━━━━━━━━━━━━━━━╯";
-
-        await ctx.reply(text);
-
-      } catch (error) {
-        console.error(
-          "❌ Owner payments error:",
-          error
-        );
-      }
-    }
+  bot.command(
+    "report",
+    reportCommand
   );
 
-  // ==================================================
-  // OWNER STATUS
-  // ==================================================
-
-  bot.action(
-    "owner_status",
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        if (!isOwner(ctx.from.id)) {
-          return ctx.reply(
-            "❌ Aᴄᴄᴇss Dᴇɴɪᴇᴅ."
-          );
-        }
-
-        const data =
-          readDatabase();
-
-        await ctx.reply(
-          `╭━━━〔 📊 Sʏsᴛᴇᴍ Sᴛᴀᴛᴜs 〕━━━╮
-
-👥 Uѕᴇʀs:
-${Object.keys(data.users).length}
-
-📩 Rᴇǫᴜᴇsᴛs:
-${Object.keys(data.requests).length}
-
-💳 Pᴀʏᴍᴇɴᴛs:
-${Object.keys(data.payments).length}
-
-🎁 Rᴇғᴇʀʀᴀʟs:
-${Object.keys(data.referrals).length}
-
-🛡️ Bᴀɴ Rᴇᴄᴏʀᴅs:
-${Object.keys(data.bans).length}
-
-📋 Lᴏɢs:
-${Object.keys(data.logs).length}
-
-⚙️ Mᴀɪɴᴛᴇɴᴀɴᴄᴇ:
-${config.settings.maintenance ? "ON" : "OFF"}
-
-👑 Oᴡɴᴇʀ Aᴘᴘʀᴏᴠᴀʟ:
-${config.settings.requireOwnerApproval ? "ON" : "OFF"}
-
-╰━━━━━━━━━━━━━━━━━━━━╯`
-        );
-
-      } catch (error) {
-        console.error(
-          "❌ Owner status error:",
-          error
-        );
-      }
-    }
+  bot.command(
+    "myrequests",
+    myRequestsCommand
   );
 
-  // ==================================================
-  // OWNER LOGS
-  // ==================================================
-
-  bot.action(
-    "owner_logs",
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        if (!isOwner(ctx.from.id)) {
-          return ctx.reply(
-            "❌ Aᴄᴄᴇss Dᴇɴɪᴇᴅ."
-          );
-        }
-
-        const data =
-          readDatabase();
-
-        const logs =
-          Object.values(
-            data.logs
-          );
-
-        if (!logs.length) {
-          return ctx.reply(
-            "📋 Nᴏ Lᴏɢs Fᴏᴜɴᴅ."
-          );
-        }
-
-        let text =
-          `╭━━━〔 📋 Aᴄᴛɪᴠɪᴛʏ Lᴏɢs 〕━━━╮\n\n`;
-
-        for (
-          const log
-          of logs
-            .slice(-15)
-            .reverse()
-        ) {
-          text +=
-            `🆔 ${log.id}\n` +
-            `📌 ${log.action || "Activity"}\n` +
-            `👤 ${log.userId || "System"}\n` +
-            `🕒 ${log.createdAt}\n\n`;
-        }
-
-        text +=
-          "╰━━━━━━━━━━━━━━━━━━━━╯";
-
-        await ctx.reply(text);
-
-      } catch (error) {
-        console.error(
-          "❌ Owner logs error:",
-          error
-        );
-      }
-    }
+  bot.command(
+    "history",
+    myRequestsCommand
   );
 
-  // ==================================================
-  // OWNER BAN CONTROL
-  // ==================================================
-
-  bot.action(
-    "owner_ban_control",
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        if (!isOwner(ctx.from.id)) {
-          return ctx.reply(
-            "❌ Aᴄᴄᴇss Dᴇɴɪᴇᴅ."
-          );
-        }
-
-        const data =
-          readDatabase();
-
-        const records =
-          Object.values(
-            data.bans
-          );
-
-        let text =
-          `╭━━━〔 🛡️ Bᴀɴ Sʏsᴛᴇᴍ 〕━━━╮\n\n`;
-
-        text +=
-          `📊 Rᴇᴄᴏʀᴅs: ${records.length}\n\n`;
-
-        if (!records.length) {
-          text +=
-            "❌ Nᴏ Bᴀɴ Rᴇᴄᴏʀᴅs Yᴇᴛ.\n\n";
-        } else {
-          for (
-            const record
-            of records
-              .slice(-10)
-              .reverse()
-          ) {
-            text +=
-              `🆔 ${record.requestId || record.id}\n` +
-              `🛠️ ${record.serviceName || record.service}\n` +
-              `🎯 ${record.target || "N/A"}\n` +
-              `⚡ ${record.action || "N/A"}\n` +
-              `📊 ${record.status || "N/A"}\n\n`;
-          }
-        }
-
-        text +=
-          "╰━━━━━━━━━━━━━━━━━━━━╯";
-
-        await ctx.reply(text);
-
-      } catch (error) {
-        console.error(
-          "❌ Ban control error:",
-          error
-        );
-      }
-    }
+  bot.command(
+    "status",
+    statusCommand
   );
 
-  // ==================================================
-  // OWNER PLACEHOLDERS
-  // ==================================================
+  bot.command(
+    "cancel",
+    cancelCommand
+  );
 
-  const ownerPlaceholders = [
-    [
-      "owner_premium",
-      "💎 Pʀᴇᴍɪᴜᴍ Mᴀɴᴀɢᴇᴍᴇɴᴛ"
-    ],
-    [
-      "owner_users",
-      "👥 Uѕᴇʀ Mᴀɴᴀɢᴇᴍᴇɴᴛ"
-    ],
-    [
-      "owner_settings",
-      "⚙️ Sʏsᴛᴇᴍ Sᴇᴛᴛɪɴɢs"
-    ]
-  ];
+  bot.command(
+    "services",
+    servicesCommand
+  );
 
-  for (
-    const [action, name]
-    of ownerPlaceholders
-  ) {
-    bot.action(
-      action,
-      async (ctx) => {
-        try {
-          await ctx.answerCbQuery();
+  bot.command(
+    "price",
+    priceCommand
+  );
 
-          if (!isOwner(ctx.from.id)) {
-            return ctx.reply(
-              "❌ Aᴄᴄᴇss Dᴇɴɪᴇᴅ."
-            );
-          }
+  // ----------------------------------------------
+  // OWNER
+  // ----------------------------------------------
 
-          await ctx.reply(
-            `╭━━━〔 ${name} 〕━━━╮
+  bot.command(
+    "owner",
+    ownerCommand
+  );
 
-🚧 Tʜɪs Sᴇᴄᴛɪᴏɴ Iѕ Bᴇɪɴɢ Cᴏɴғɪɢᴜʀᴇᴅ.
+  bot.command(
+    "panel",
+    ownerCommand
+  );
 
-╰━━━━━━━━━━━━━━━━━━━━╯`
-          );
+  bot.command(
+    "requests",
+    requestsCommand
+  );
 
-        } catch (error) {
-          console.error(
-            `❌ ${action} error:`,
-            error
-          );
-        }
-      }
-    );
-  }
+  bot.command(
+    "pending",
+    pendingCommand
+  );
 
-  // ==================================================
+  bot.command(
+    "approve",
+    approveCommand
+  );
+
+  bot.command(
+    "reject",
+    rejectCommand
+  );
+
+  bot.command(
+    "premium",
+    premiumCommand
+  );
+
+  bot.command(
+    "premiumoff",
+    premiumOffCommand
+  );
+
+  bot.command(
+    "premiuminfo",
+    premiumInfoCommand
+  );
+
+  bot.command(
+    "premiumusers",
+    premiumUsersCommand
+  );
+
+  bot.command(
+    "credit",
+    creditCommand
+  );
+
+  bot.command(
+    "debit",
+    debitCommand
+  );
+
+  bot.command(
+    "users",
+    usersCommand
+  );
+
+  bot.command(
+    "userinfo",
+    userInfoCommand
+  );
+
+  bot.command(
+    "stats",
+    statsCommand
+  );
+
+  // ----------------------------------------------
   // TEXT INPUT
-  // ==================================================
+  // ----------------------------------------------
 
   bot.on(
     "text",
-    async (ctx) => {
-      try {
-        const userId =
-          String(ctx.from.id);
+    async ctx => {
 
-        const text =
+      const id = userId(ctx);
+
+      const state =
+        waiting.get(id);
+
+      if (!state) {
+        return;
+      }
+
+      const request =
+        getRequest(
+          state.requestId
+        );
+
+      if (!request) {
+        waiting.delete(id);
+
+        return ctx.reply(
+          "❌ Request no longer exists."
+        );
+      }
+
+      if (
+        state.type ===
+        "reason"
+      ) {
+        request.reason =
           ctx.message.text.trim();
 
-        if (text.startsWith("/")) {
-          return;
-        }
+        request.status =
+          "REPORT_PENDING";
 
-        const requests =
-          getUserRequests(userId);
-
-        const activeRequest =
-          requests
-            .filter((request) =>
-              [
-                "TARGET_PENDING",
-                "REASON_PENDING"
-              ].includes(
-                request.status
-              )
-            )
-            .sort(
-              (a, b) =>
-                new Date(
-                  b.updatedAt || 0
-                ) -
-                new Date(
-                  a.updatedAt || 0
-                )
-            )[0];
-
-        if (!activeRequest) {
-          return;
-        }
-
-        if (
-          activeRequest.status ===
-          "TARGET_PENDING"
-        ) {
-          saveRequest(
-            activeRequest.id,
-            {
-              target: text,
-              status: "REASON_PENDING"
-            }
-          );
-
-          return ctx.reply(
-            `🎯 Tᴀʀɢᴇᴛ Sᴀᴠᴇᴅ.
-
-📝 Nᴏᴡ Sᴇɴᴅ Tʜᴇ Rᴇᴀsᴏɴ Fᴏʀ Tʜɪs Rᴇǫᴜᴇsᴛ.`
-          );
-        }
-
-        if (
-          activeRequest.status ===
-          "REASON_PENDING"
-        ) {
-          saveRequest(
-            activeRequest.id,
-            {
-              reason: text,
-              status: "PAYMENT_PENDING"
-            }
-          );
-
-          return ctx.reply(
-            paymentText({
-              name:
-                activeRequest.serviceName,
-              price:
-                activeRequest.price
-            }),
-            Markup.inlineKeyboard([
-              [
-                Markup.button.callback(
-                  "💳 Pᴀʏᴍᴇɴᴛ Sᴇɴᴛ",
-                  `payment_sent:${activeRequest.id}`
-                )
-              ]
-            ])
-          );
-        }
-
-      } catch (error) {
-        console.error(
-          "❌ Text handler error:",
-          error
-        );
-      }
-    }
-  );
-
-  // ==================================================
-  // PAYMENT SENT
-  // ==================================================
-
-  bot.action(
-    /^payment_sent:(.+)$/,
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        const requestId =
-          ctx.match[1];
-
-        const request =
-          getRequest(requestId);
-
-        if (!request) {
-          return ctx.reply(
-            "❌ Rᴇǫᴜᴇsᴛ Nᴏᴛ Fᴏᴜɴᴅ."
-          );
-        }
-
-        if (
-          String(request.userId) !==
-          String(ctx.from.id)
-        ) {
-          return ctx.reply(
-            "❌ Tʜɪs Iѕ Nᴏᴛ Yᴏᴜʀ Rᴇǫᴜᴇsᴛ."
-          );
-        }
-
-        saveRequest(
-          requestId,
-          {
-            status:
-              "PAYMENT_PROOF_PENDING"
-          }
-        );
-
-        await ctx.reply(
-          `📸 Pᴀʏᴍᴇɴᴛ Mᴀʀᴋᴇᴅ.
-
-Nᴏᴡ Sᴇɴᴅ Yᴏᴜʀ Pᴀʏᴍᴇɴᴛ Sᴄʀᴇᴇɴsʜᴏᴛ.`
-        );
-
-      } catch (error) {
-        console.error(
-          "❌ Payment sent error:",
-          error
-        );
-      }
-    }
-  );
-
-  // ==================================================
-  // PAYMENT PROOF
-  // ==================================================
-
-  bot.on(
-    "photo",
-    async (ctx) => {
-      try {
-        const userId =
-          String(ctx.from.id);
-
-        const requests =
-          getUserRequests(userId);
-
-        const request =
-          requests
-            .filter(
-              (item) =>
-                item.status ===
-                "PAYMENT_PROOF_PENDING"
-            )
-            .sort(
-              (a, b) =>
-                new Date(
-                  b.updatedAt || 0
-                ) -
-                new Date(
-                  a.updatedAt || 0
-                )
-            )[0];
-
-        if (!request) {
-          return ctx.reply(
-            "❌ Nᴏ Pᴀʏᴍᴇɴᴛ Pʀᴏᴏғ Rᴇǫᴜᴇsᴛ Iѕ Wᴀɪᴛɪɴɢ."
-          );
-        }
-
-        const photo =
-          ctx.message.photo[
-            ctx.message.photo.length - 1
-          ];
-
-        const paymentId =
-          generatePaymentId();
-
-        savePayment(
-          paymentId,
-          {
-            requestId:
-              request.id,
-            userId,
-            amount:
-              request.price,
-            proofFileId:
-              photo.file_id,
-            status:
-              "PENDING_REVIEW"
-          }
-        );
+        request.updatedAt =
+          now();
 
         saveRequest(
           request.id,
-          {
-            status:
-              "PENDING_OWNER_APPROVAL",
-            paymentId,
-            paymentProof:
-              photo.file_id
-          }
+          request
         );
 
-        addLog({
-          action:
-            "PAYMENT_PROOF_SUBMITTED",
-          userId,
-          requestId:
-            request.id,
-          paymentId
-        });
+        waiting.delete(id);
 
-        await ctx.reply(
-          `╭━━━〔 ⏳ Rᴇǫᴜᴇsᴛ Sᴜʙᴍɪᴛᴛᴇᴅ 〕━━━╮
+        return ctx.reply(
+`${banGuard(request)}
 
-🆔 Rᴇǫᴜᴇsᴛ:
-${request.id}
+━━━━━━━━━━━━━━━━━━
 
-💳 Pᴀʏᴍᴇɴᴛ:
-Rᴇᴄᴇɪᴠᴇᴅ
+📊 5-report verification is required.
 
-📊 Sᴛᴀᴛᴜs:
-Pᴇɴᴅɪɴɢ Oᴡɴᴇʀ Rᴇᴠɪᴇᴡ
+To submit a legitimate report/review
+for this request, use:
 
-👑 Aɴ Oᴡɴᴇʀ Wɪʟʟ Rᴇᴠɪᴇᴡ Yᴏᴜʀ Rᴇǫᴜᴇsᴛ.
+/report ${request.id}
 
-╰━━━━━━━━━━━━━━━━━━━━╯`
-        );
-
-        for (
-          const ownerId
-          of config.ownerIds
-        ) {
-          try {
-            await bot.telegram.sendPhoto(
-              ownerId,
-              photo.file_id,
-              {
-                caption:
-                  `📩 Nᴇᴡ Pᴀʏᴍᴇɴᴛ Pʀᴏᴏғ\n\n` +
-                  `🆔 Rᴇǫᴜᴇsᴛ: ${request.id}\n` +
-                  `👤 Uѕᴇʀ: ${userId}\n` +
-                  `🛠️ Sᴇʀᴠɪᴄᴇ: ${request.serviceName}\n` +
-                  `💰 Aᴍᴏᴜɴᴛ: ₦${request.price}\n` +
-                  `🎯 Tᴀʀɢᴇᴛ: ${request.target || "N/A"}`,
-                ...requestButtons(
-                  request.id
-                )
-              }
-            );
-          } catch (ownerError) {
-            console.error(
-              `❌ Failed notifying owner ${ownerId}:`,
-              ownerError.message
-            );
-          }
-        }
-
-      } catch (error) {
-        console.error(
-          "❌ Payment proof error:",
-          error
+Each Telegram user can contribute
+only once to the request.`
         );
       }
     }
   );
 
-  // ==================================================
-  // APPROVE REQUEST
-  // ==================================================
+  // ----------------------------------------------
+  // ERROR HANDLING
+  // ----------------------------------------------
 
-  bot.action(
-    /^approve_request:(.+)$/,
-    async (ctx) => {
+  bot.catch(
+    (error, ctx) => {
+      console.error(
+        "❌ Telegram handler error:",
+        error
+      );
+
       try {
-        await ctx.answerCbQuery();
-
-        if (!isOwner(ctx.from.id)) {
-          return ctx.reply(
-            "❌ Aᴄᴄᴇss Dᴇɴɪᴇᴅ."
-          );
-        }
-
-        const requestId =
-          ctx.match[1];
-
-        const request =
-          getRequest(requestId);
-
-        if (!request) {
-          return ctx.reply(
-            "❌ Rᴇǫᴜᴇsᴛ Nᴏᴛ Fᴏᴜɴᴅ."
-          );
-        }
-
-        if (
-          request.status !==
-          "PENDING_OWNER_APPROVAL"
-        ) {
-          return ctx.reply(
-            `⚠️ Tʜɪs Rᴇǫᴜᴇsᴛ Iѕ Aʟʀᴇᴀᴅʏ ${request.status}.`
-          );
-        }
-
-        // ------------------------------------------------
-        // Mark owner approval
-        // ------------------------------------------------
-
-        saveRequest(
-          requestId,
-          {
-            status: "APPROVED",
-            approvedBy:
-              String(ctx.from.id),
-            approvedAt:
-              new Date().toISOString()
-          }
+        ctx.reply(
+          "❌ An unexpected error occurred. Please try again."
         );
-
-        if (request.paymentId) {
-          savePayment(
-            request.paymentId,
-            {
-              status: "APPROVED",
-              approvedBy:
-                String(ctx.from.id)
-            }
-          );
-        }
-
-        addLog({
-          action:
-            "REQUEST_APPROVED",
-          ownerId:
-            String(ctx.from.id),
-          userId:
-            request.userId,
-          requestId
-        });
-
-        await ctx.reply(
-          `✅ Rᴇǫᴜᴇsᴛ Aᴘᴘʀᴏᴠᴇᴅ.
-
-🆔 ${requestId}
-
-⏳ Pʀᴏᴄᴇssɪɴɢ Tʜᴇ Rᴇǫᴜᴇsᴛ...`
-        );
-
-        // ------------------------------------------------
-        // Execute approved request
-        // ------------------------------------------------
-
-        await processApprovedRequest(
-          bot,
-          request,
-          String(ctx.from.id)
-        );
-
-      } catch (error) {
-        console.error(
-          "❌ Approve error:",
-          error
-        );
-      }
+      } catch {}
     }
-  );
-
-  // ==================================================
-  // REJECT REQUEST
-  // ==================================================
-
-  bot.action(
-    /^reject_request:(.+)$/,
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-
-        if (!isOwner(ctx.from.id)) {
-          return ctx.reply(
-            "❌ Aᴄᴄᴇss Dᴇɴɪᴇᴅ."
-          );
-        }
-
-        const requestId =
-          ctx.match[1];
-
-        const request =
-          getRequest(requestId);
-
-        if (!request) {
-          return ctx.reply(
-            "❌ Rᴇǫᴜᴇsᴛ Nᴏᴛ Fᴏᴜɴᴅ."
-          );
-        }
-
-        if (
-          request.status !==
-          "PENDING_OWNER_APPROVAL"
-        ) {
-          return ctx.reply(
-            `⚠️ Tʜɪs Rᴇǫᴜᴇsᴛ Iѕ Aʟʀᴇᴀᴅʏ ${request.status}.`
-          );
-        }
-
-        saveRequest(
-          requestId,
-          {
-            status: "REJECTED",
-            rejectedBy:
-              String(ctx.from.id),
-            rejectedAt:
-              new Date().toISOString()
-          }
-        );
-
-        if (request.paymentId) {
-          savePayment(
-            request.paymentId,
-            {
-              status: "REJECTED",
-              rejectedBy:
-                String(ctx.from.id)
-            }
-          );
-        }
-
-        addLog({
-          action:
-            "REQUEST_REJECTED",
-          ownerId:
-            String(ctx.from.id),
-          userId:
-            request.userId,
-          requestId
-        });
-
-        await ctx.reply(
-          `❌ Rᴇǫᴜᴇsᴛ Rᴇᴊᴇᴄᴛᴇᴅ.
-
-🆔 ${requestId}`
-        );
-
-        try {
-          await bot.telegram.sendMessage(
-            request.userId,
-            `❌ Yᴏᴜʀ Rᴇǫᴜᴇsᴛ Wᴀs Rᴇᴊᴇᴄᴛᴇᴅ.
-
-🆔 ${requestId}
-
-📩 Cᴏɴᴛᴀᴄᴛ Tʜᴇ Oᴡɴᴇʀ Fᴏʀ Mᴏʀᴇ Iɴғᴏʀᴍᴀᴛɪᴏɴ.`
-          );
-        } catch (notifyError) {
-          console.error(
-            "❌ User rejection notification failed:",
-            notifyError.message
-          );
-        }
-
-      } catch (error) {
-        console.error(
-          "❌ Reject error:",
-          error
-        );
-      }
-    }
-  );
-
-  // ==================================================
-  // UNKNOWN CALLBACK
-  // ==================================================
-
-  bot.on(
-    "callback_query",
-    async (ctx) => {
-      try {
-        await ctx.answerCbQuery();
-      } catch (_) {
-        // Already answered.
-      }
-    }
-  );
-
-  console.log(
-    "✅ Telegram handlers registered."
   );
 }
 
@@ -1779,5 +2119,6 @@ Pᴇɴᴅɪɴɢ Oᴡɴᴇʀ Rᴇᴠɪᴇᴡ
 // ==================================================
 
 module.exports = {
-  registerHandlers
+  registerHandlers,
+  processApprovedRequest
 };
