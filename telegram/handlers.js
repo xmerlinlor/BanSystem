@@ -1,27 +1,25 @@
 // telegram/handlers.js
 
-const { Markup } = require("telegraf");
 const config = require("../config");
 
-const {
-getStartMenu
-} = require("./menu");
+const { getStartMenu } = require("./menu");
 
 const {
-getUser,
-saveUser,
-getRequest,
-saveRequest,
-getUserRequests,
-getPendingRequests,
-savePayment,
-getPayment,
-saveBan,
-addLog
+  getUser,
+  saveUser,
+  getRequest,
+  saveRequest,
+  getUserRequests,
+  getPendingRequests,
+  savePayment,
+  getPayment,
+  saveBan,
+  addLog,
+  readDatabase
 } = require("../database/database");
 
 const {
-executeBanRequest
+  executeBanRequest
 } = require("../services/banService");
 
 // ==================================================
@@ -37,189 +35,162 @@ const waiting = new Map();
 // ==================================================
 
 function userId(ctx) {
-return String(ctx.from?.id || "");
+  return String(ctx.from?.id || "");
 }
 
 function username(ctx) {
-return ctx.from?.username
-? "@${ctx.from.username}"
-: ctx.from?.first_name || "User";
+  return ctx.from?.username
+    ? `@${ctx.from.username}`
+    : ctx.from?.first_name || "User";
 }
 
 function isOwner(ctx) {
-const owners = Array.isArray(config.ownerIds)
-? config.ownerIds.map(String)
-: [];
+  const owners = Array.isArray(config.ownerIds)
+    ? config.ownerIds.map(String)
+    : [];
 
-return owners.includes(userId(ctx));
+  return owners.includes(userId(ctx));
 }
 
 function money(amount) {
-return "₦${Number(amount || 0).toLocaleString()}";
+  return `₦${Number(amount || 0).toLocaleString("en-NG")}`;
 }
 
 function now() {
-return new Date().toLocaleString("en-GB", {
-timeZone: "Africa/Lagos"
-});
+  return new Date().toLocaleString("en-GB", {
+    timeZone: "Africa/Lagos"
+  });
 }
 
 function makeId(prefix) {
-return "${prefix}-${Date.now()}-${Math.floor( Math.random() * 1000 )}";
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 }
-
-// ==================================================
-// BALANCE
-// ==================================================
 
 function getBalance(ctx) {
-const user = getUser(userId(ctx));
+  const user = getUser(userId(ctx));
 
-return Number(
-user?.balance ||
-user?.wallet ||
-0
-);
-}
-
-function getUserBalance(id) {
-const user = getUser(String(id));
-
-return Number(
-user?.balance ||
-user?.wallet ||
-0
-);
+  return Number(
+    user?.balance ??
+    user?.wallet ??
+    0
+  );
 }
 
 function setBalance(id, amount) {
-const user = getUser(String(id)) || {
-id: String(id),
-balance: 0
-};
+  const user = getUser(String(id)) || {
+    id: String(id),
+    balance: 0
+  };
 
-user.balance = Number(amount);
+  user.balance = Number(amount);
 
-saveUser(String(id), user);
+  saveUser(String(id), user);
 
-return user;
+  return user;
 }
 
 function changeBalance(id, amount) {
-const user = getUser(String(id)) || {
-id: String(id),
-balance: 0
-};
+  const user = getUser(String(id)) || {
+    id: String(id),
+    balance: 0
+  };
 
-user.balance =
-Number(user.balance || 0) +
-Number(amount || 0);
+  user.balance =
+    Number(user.balance || 0) +
+    Number(amount || 0);
 
-if (user.balance < 0) {
-user.balance = 0;
+  if (user.balance < 0) {
+    user.balance = 0;
+  }
+
+  saveUser(String(id), user);
+
+  return user.balance;
 }
-
-saveUser(String(id), user);
-
-return user.balance;
-}
-
-// ==================================================
-// PREMIUM
-// ==================================================
 
 function isPremium(id) {
-const user = getUser(String(id));
+  const user = getUser(String(id));
 
-return Boolean(
-user?.premium === true ||
-user?.isPremium === true
-);
+  return Boolean(
+    user?.premium === true ||
+    user?.isPremium === true
+  );
 }
 
 function setPremium(id, value) {
-const targetId = String(id);
+  const user =
+    getUser(String(id)) || {
+      id: String(id)
+    };
 
-const user =
-getUser(targetId) || {
-id: targetId
-};
+  user.premium = Boolean(value);
+  user.isPremium = Boolean(value);
 
-user.premium = Boolean(value);
-user.isPremium = Boolean(value);
+  saveUser(String(id), user);
 
-saveUser(targetId, user);
-
-return user;
+  return user;
 }
 
-// ==================================================
-// REPORT SYSTEM
-// ==================================================
-
 function getReportCount(request) {
-return Array.isArray(request?.reports)
-? request.reports.length
-: Number(request?.reportCount || 0);
+  return Array.isArray(request?.reports)
+    ? request.reports.length
+    : Number(request?.reportCount || 0);
 }
 
 function hasReported(request, id) {
-if (!Array.isArray(request?.reports)) {
-return false;
-}
-
-return request.reports.some(
-report =>
-String(report.userId) ===
-String(id)
-);
+  return Array.isArray(request?.reports)
+    ? request.reports.some(
+        report =>
+          String(report.userId) === String(id)
+      )
+    : false;
 }
 
 function addReport(request, ctx) {
-if (!Array.isArray(request.reports)) {
-request.reports = [];
-}
+  if (!Array.isArray(request.reports)) {
+    request.reports = [];
+  }
 
-if (hasReported(request, userId(ctx))) {
-return false;
-}
+  if (hasReported(request, userId(ctx))) {
+    return false;
+  }
 
-request.reports.push({
-userId: userId(ctx),
-username: username(ctx),
-submittedAt: now()
-});
+  request.reports.push({
+    userId: userId(ctx),
+    username: username(ctx),
+    submittedAt: now()
+  });
 
-request.reportCount =
-request.reports.length;
+  request.reportCount =
+    request.reports.length;
 
-return true;
+  return true;
 }
 
 function reportStatus(request) {
-const count = getReportCount(request);
+  const count = getReportCount(request);
 
-let text = "";
+  let text = "";
 
-for (
-let i = 1;
-i <= REQUIRED_REPORTS;
-i++
-) {
-text +=
-i <= count
-? "✅ Report ${i}/5\n"
-: "⬜ Report ${i}/5\n";
-}
+  for (
+    let i = 1;
+    i <= REQUIRED_REPORTS;
+    i++
+  ) {
+    text +=
+      i <= count
+        ? `✅ Report ${i}/5\n`
+        : `⬜ Report ${i}/5\n`;
+  }
 
-return text.trim();
+  return text.trim();
 }
 
 function banGuard(
-request,
-status = "REPORT VERIFICATION"
+  request,
+  status = "REPORT VERIFICATION"
 ) {
-return `🛡️ Bᴀɴ Gᴜᴀʀᴅ
+  return `🛡️ Bᴀɴ Gᴜᴀʀᴅ
 
 📱 Target: ${request.target}
 🔴 Status: ${status}
@@ -236,7 +207,25 @@ ${reportStatus(request)}
 }
 
 function requestSummary(request) {
-return "🆔 Request: ${request.id} 👤 User: ${request.username || request.userId} 🛡️ Service: ${request.service} 📱 Target: ${request.target} 📝 Reason: ${request.reason || "Not provided"} 📊 Reports: ${getReportCount(request)}/${REQUIRED_REPORTS} 💰 Price: ${money(request.price)} 📌 Status: ${request.status}";
+  return `🆔 Request: ${request.id}
+
+👤 User: ${request.username || request.userId}
+
+🛡️ Service: ${request.service}
+
+📱 Target: ${request.target}
+
+📝 Reason: ${request.reason || "Not provided"}
+
+📊 Reports: ${getReportCount(request)}/${REQUIRED_REPORTS}
+
+💰 Price: ${money(request.price)}
+
+📌 Status: ${request.status}
+
+💳 Payment: ${request.paymentStatus || "UNPAID"}
+
+⚙️ Execution: ${request.executionStatus || "WAITING"}`;
 }
 
 // ==================================================
@@ -244,48 +233,46 @@ return "🆔 Request: ${request.id} 👤 User: ${request.username || request.use
 // ==================================================
 
 function getPrice(service) {
-switch (service) {
+  switch (service) {
+    case "whatsapp_ban":
+      return Number(
+        config.prices?.userBan || 0
+      );
 
-case "whatsapp_ban":
-  return Number(
-    config.prices?.userBan || 0
-  );
+    case "whatsapp_unban":
+      return Number(
+        config.prices?.userUnban || 0
+      );
 
-case "whatsapp_unban":
-  return Number(
-    config.prices?.userUnban || 0
-  );
+    case "whatsapp_group_ban":
+    case "whatsapp_channel_ban":
+    case "telegram_group_ban":
+    case "telegram_channel_ban":
+      return Number(
+        config.prices?.groupChannelBan || 0
+      );
 
-case "whatsapp_group_ban":
-case "whatsapp_channel_ban":
-case "telegram_group_ban":
-case "telegram_channel_ban":
-  return Number(
-    config.prices?.groupChannelBan || 0
-  );
+    case "whatsapp_group_unban":
+    case "whatsapp_channel_unban":
+    case "telegram_group_unban":
+    case "telegram_channel_unban":
+      return Number(
+        config.prices?.groupChannelUnban || 0
+      );
 
-case "whatsapp_group_unban":
-case "whatsapp_channel_unban":
-case "telegram_group_unban":
-case "telegram_channel_unban":
-  return Number(
-    config.prices?.groupChannelUnban || 0
-  );
+    case "telegram_ban":
+      return Number(
+        config.prices?.userBan || 0
+      );
 
-case "telegram_ban":
-  return Number(
-    config.prices?.userBan || 0
-  );
+    case "telegram_unban":
+      return Number(
+        config.prices?.userUnban || 0
+      );
 
-case "telegram_unban":
-  return Number(
-    config.prices?.userUnban || 0
-  );
-
-default:
-  return 0;
-
-}
+    default:
+      return 0;
+  }
 }
 
 // ==================================================
@@ -293,27 +280,27 @@ default:
 // ==================================================
 
 function validPhone(value) {
-return /^\d{8,15}$/.test(
-String(value || "")
-);
+  return /^\d{8,15}$/.test(
+    String(value || "")
+  );
 }
 
 function validWhatsAppGroup(value) {
-return /^https://chat.whatsapp.com/[A-Za-z0-9]+$/i.test(
-String(value || "").trim()
-);
+  return /^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9]+$/i.test(
+    String(value || "").trim()
+  );
 }
 
 function validWhatsAppChannel(value) {
-return /^https://whatsapp.com/channel/[A-Za-z0-9_-]+$/i.test(
-String(value || "").trim()
-);
+  return /^https:\/\/whatsapp\.com\/channel\/[A-Za-z0-9_-]+$/i.test(
+    String(value || "").trim()
+  );
 }
 
 function validTelegramId(value) {
-return /^-?\d+$/.test(
-String(value || "").trim()
-);
+  return /^-?\d+$/.test(
+    String(value || "").trim()
+  );
 }
 
 // ==================================================
@@ -321,12 +308,12 @@ String(value || "").trim()
 // ==================================================
 
 async function startCommand(ctx) {
-return ctx.reply(
-getStartMenu(ctx),
-{
-parse_mode: "HTML"
-}
-);
+  return ctx.reply(
+    getStartMenu(ctx),
+    {
+      parse_mode: "HTML"
+    }
+  );
 }
 
 // ==================================================
@@ -334,7 +321,7 @@ parse_mode: "HTML"
 // ==================================================
 
 async function helpCommand(ctx) {
-return ctx.reply(
+  return ctx.reply(
 `🛡️ Bᴀɴ Sʏsᴛᴇᴍ Hᴇʟᴘ
 
 📱 WʜᴀᴛsAᴘᴘ
@@ -375,8 +362,11 @@ return ctx.reply(
 /history
 /status REQUEST_ID
 /cancel REQUEST_ID
+
+📊 Verification
+
 /report REQUEST_ID`
-);
+  );
 }
 
 // ==================================================
@@ -384,30 +374,28 @@ return ctx.reply(
 // ==================================================
 
 async function profileCommand(ctx) {
-const id = userId(ctx);
+  const id = userId(ctx);
 
-return ctx.reply(
+  return ctx.reply(
 `👤 Pʀᴏғɪʟᴇ
 
 ├ 👤 User: ${username(ctx)}
 ├ 🆔 ID: ${id}
-├ 💎 Premium: ${
-isPremium(id)
-? "Yes 💎"
-: "No"
-}
-└ 💰 Balance: ${money(
-getBalance(ctx)
-)}`
-);
+├ 💎 Premium: ${isPremium(id) ? "Yes 💎" : "No"}
+└ 💰 Balance: ${money(getBalance(ctx))}`
+  );
 }
 
+// ==================================================
+// ID
+// ==================================================
+
 async function idCommand(ctx) {
-return ctx.reply(
+  return ctx.reply(
 `🆔 Yᴏᴜʀ Tᴇʟᴇɢʀᴀᴍ ID
 
 ${userId(ctx)}`
-);
+  );
 }
 
 // ==================================================
@@ -415,19 +403,17 @@ ${userId(ctx)}`
 // ==================================================
 
 async function balanceCommand(ctx) {
-return ctx.reply(
+  return ctx.reply(
 `💰 Bᴀʟᴀɴᴄᴇ
 
-💵 Balance: ${money(
-getBalance(ctx)
-)}
+💵 Balance: ${money(getBalance(ctx))}
 
 💳 Use:
 
 /deposit AMOUNT
 
 to add funds.`
-);
+  );
 }
 
 // ==================================================
@@ -435,46 +421,40 @@ to add funds.`
 // ==================================================
 
 async function depositCommand(ctx) {
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const amount =
-Number(args[1]);
+  const amount = Number(args[1]);
 
-if (
-!amount ||
-amount <= 0
-) {
-return ctx.reply(
-`❌ Usage:
+  if (!amount || amount <= 0) {
+    return ctx.reply(
+`❌ Iɴᴠᴀʟɪᴅ Dᴇᴘᴏsɪᴛ
+
+Usage:
 
 /deposit 5000`
-);
-}
+    );
+  }
 
-const id =
-makeId("DEP");
+  const id = makeId("DEP");
 
-const payment = {
-id,
-userId: userId(ctx),
-username: username(ctx),
-amount,
-status: "PAYMENT_PENDING",
-createdAt: now()
-};
+  const payment = {
+    id,
+    userId: userId(ctx),
+    username: username(ctx),
+    amount,
+    status: "PAYMENT_PENDING",
+    createdAt: now()
+  };
 
-savePayment(
-id,
-payment
-);
+  savePayment(id, payment);
 
-return ctx.reply(
+  return ctx.reply(
 `💳 Dᴇᴘᴏsɪᴛ Rᴇǫᴜᴇsᴛ
 
 🆔 Deposit: ${id}
+
 💵 Amount: ${money(amount)}
 
 🏦 Payment Information
@@ -492,7 +472,7 @@ payment proof to this chat.
 
 👑 Your deposit will be credited
 after owner verification.`
-);
+  );
 }
 
 // ==================================================
@@ -500,45 +480,43 @@ after owner verification.`
 // ==================================================
 
 function createRequest(
-ctx,
-service,
-target
+  ctx,
+  service,
+  target
 ) {
-const requestId =
-makeId("REQ");
+  const requestId = makeId("REQ");
 
-const request = {
-id: requestId,
+  const request = {
+    id: requestId,
 
-userId: userId(ctx),
-username: username(ctx),
+    userId: userId(ctx),
+    username: username(ctx),
 
-service,
-target,
+    service,
+    target,
 
-reason: null,
+    reason: null,
 
-price: getPrice(service),
+    price: getPrice(service),
 
-reportCount: 0,
-reports: [],
+    reportCount: 0,
+    reports: [],
 
-status: "REPORT_PENDING",
+    status: "REPORT_PENDING",
 
-paymentStatus: "UNPAID",
-executionStatus: "WAITING",
+    paymentStatus: "UNPAID",
+    executionStatus: "WAITING",
 
-createdAt: now(),
-updatedAt: now()
+    createdAt: now(),
+    updatedAt: now()
+  };
 
-};
+  saveRequest(
+    requestId,
+    request
+  );
 
-saveRequest(
-requestId,
-request
-);
-
-return request;
+  return request;
 }
 
 // ==================================================
@@ -546,16 +524,14 @@ return request;
 // ==================================================
 
 async function banCommand(ctx) {
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const target =
-args[1];
+  const target = args[1];
 
-if (!target) {
-return ctx.reply(
+  if (!target) {
+    return ctx.reply(
 `🛡️ WʜᴀᴛsAᴘᴘ Bᴀɴ
 
 Usage:
@@ -563,31 +539,29 @@ Usage:
 /ban 234xxxxxxxxx
 
 📱 Phone number only.`
-);
-}
+    );
+  }
 
-if (!validPhone(target)) {
-return ctx.reply(
-"❌ Invalid WhatsApp phone number.\n\nUse numbers only."
-);
-}
+  if (!validPhone(target)) {
+    return ctx.reply(
+`❌ Invalid WhatsApp phone number.
 
-const request =
-createRequest(
-ctx,
-"whatsapp_ban",
-target
-);
+Use numbers only.`
+    );
+  }
 
-waiting.set(
-userId(ctx),
-{
-type: "reason",
-requestId: request.id
-}
-);
+  const request = createRequest(
+    ctx,
+    "whatsapp_ban",
+    target
+  );
 
-return ctx.reply(
+  waiting.set(userId(ctx), {
+    type: "reason",
+    requestId: request.id
+  });
+
+  return ctx.reply(
 `${banGuard(request)}
 
 ━━━━━━━━━━━━━━━━━━
@@ -597,8 +571,9 @@ return ctx.reply(
 Please send the reason for this request.
 
 Example:
+
 Age verification failure`
-);
+  );
 }
 
 // ==================================================
@@ -606,16 +581,14 @@ Age verification failure`
 // ==================================================
 
 async function unbanCommand(ctx) {
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const target =
-args[1];
+  const target = args[1];
 
-if (!target) {
-return ctx.reply(
+  if (!target) {
+    return ctx.reply(
 `🔓 WʜᴀᴛsAᴘᴘ Uɴʙᴀɴ
 
 Usage:
@@ -623,58 +596,65 @@ Usage:
 /unban 234xxxxxxxxx
 
 📱 Phone number only.`
-);
-}
+    );
+  }
 
-if (!validPhone(target)) {
-return ctx.reply(
-"❌ Invalid WhatsApp phone number."
-);
-}
+  if (!validPhone(target)) {
+    return ctx.reply(
+      "❌ Invalid WhatsApp phone number."
+    );
+  }
 
-const request =
-createRequest(
-ctx,
-"whatsapp_unban",
-target
-);
+  const request = createRequest(
+    ctx,
+    "whatsapp_unban",
+    target
+  );
 
-const existing =
-require("../database/database")
-.getBan(target);
+  const existing = require("../database/database")
+    .getBan(target);
 
-request.banRecord =
-existing || null;
+  request.banRecord =
+    existing || null;
 
-if (existing) {
-request.reason =
-existing.reason ||
-"Previous ban record";
-}
+  if (existing) {
+    request.reason =
+      existing.reason ||
+      "Previous ban record";
+  }
 
-request.unbanType =
-"Permanent Unban";
+  request.unbanType =
+    "Permanent Unban";
 
-saveRequest(
-request.id,
-request
-);
+  saveRequest(
+    request.id,
+    request
+  );
 
-return ctx.reply(
-`🔓 WʜᴀᴛsAᴘᴘ Uɴʙᴀɴ
+  let guardText = "";
 
-${
-existing
-? `🛡️ Bᴀɴ Gᴜᴀʀᴅ
+  if (existing) {
+    guardText =
+`🛡️ Bᴀɴ Gᴜᴀʀᴅ
 
 📱 Phone: ${target}
 🔴 Status: BANNED
 📝 Reason: ${existing.reason || "Not recorded"}
 ⏳ Type: ${existing.type || "Permanent"}
-🕐 Ban at: ${existing.banAt || "Unknown"}":"📱 Phone: ${target}
+🕐 Ban At: ${existing.banAt || "Unknown"}`;
+  } else {
+    guardText =
+`🛡️ Bᴀɴ Gᴜᴀʀᴅ
 
-⚠️ No saved BAN GUARD record was found.`
-}
+📱 Phone: ${target}
+
+⚠️ No saved BAN GUARD record was found.`;
+  }
+
+  return ctx.reply(
+`🔓 WʜᴀᴛsAᴘᴘ Uɴʙᴀɴ
+
+${guardText}
 
 ━━━━━━━━━━━━━━━━━━
 
@@ -690,7 +670,7 @@ before the request can proceed.
 Use:
 
 /report ${request.id}`
-);
+  );
 }
 
 // ==================================================
@@ -698,226 +678,119 @@ Use:
 // ==================================================
 
 async function reportCommand(ctx) {
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const requestId =
-args[1];
+  const requestId = args[1];
 
-if (!requestId) {
-return ctx.reply(
-"❌ Usage:\n/report REQUEST_ID"
-);
-}
+  if (!requestId) {
+    return ctx.reply(
+`❌ Usage:
 
-const request =
-getRequest(requestId);
+/report REQUEST_ID`
+    );
+  }
 
-if (!request) {
-return ctx.reply(
-"❌ Request not found."
-);
-}
+  const request =
+    getRequest(requestId);
 
-// IMPORTANT:
-// Reports are intentionally NOT restricted
-// to the request owner. Different Telegram
-// users can contribute one legitimate
-// verification/review record each.
+  if (!request) {
+    return ctx.reply(
+      "❌ Request not found."
+    );
+  }
 
-if (
-[
-"COMPLETED",
-"PROCESSING",
-"REJECTED",
-"CANCELLED",
-"EXECUTION_FAILED"
-].includes(request.status)
-) {
-return ctx.reply(
-"❌ This request is no longer accepting reports."
-);
-}
+  if (request.status === "COMPLETED") {
+    return ctx.reply(
+      "❌ This request is already completed."
+    );
+  }
 
-if (
-hasReported(
-request,
-userId(ctx)
-)
-) {
-return ctx.reply(
-"⚠️ You have already submitted a report for this request."
-);
-}
+  if (hasReported(request, userId(ctx))) {
+    return ctx.reply(
+      "⚠️ You have already submitted a report/review for this request."
+    );
+  }
 
-const added =
-addReport(
-request,
-ctx
-);
+  const added =
+    addReport(request, ctx);
 
-if (!added) {
-return ctx.reply(
-"⚠️ Report was not added."
-);
-}
+  if (!added) {
+    return ctx.reply(
+      "⚠️ Report was not added."
+    );
+  }
 
-request.updatedAt =
-now();
+  request.updatedAt = now();
 
-const count =
-getReportCount(request);
+  if (
+    getReportCount(request) >=
+    REQUIRED_REPORTS
+  ) {
+    request.status =
+      "REPORTS_VERIFIED";
+  }
 
-// ----------------------------------------------
-// STILL WAITING
-// ----------------------------------------------
+  saveRequest(
+    request.id,
+    request
+  );
 
-if (
-count < REQUIRED_REPORTS
-) {
-request.status =
-"REPORT_PENDING";
+  const count =
+    getReportCount(request);
 
-saveRequest(
-  request.id,
-  request
-);
-
-return ctx.reply(
-
+  if (count < REQUIRED_REPORTS) {
+    return ctx.reply(
 `${banGuard(
-request,
-"REPORT VERIFICATION"
+  request,
+  "REPORT VERIFICATION"
 )}
-
-━━━━━━━━━━━━━━━━━━
 
 ⏳ ${count}/5 reports verified.
 
 Waiting for ${
-REQUIRED_REPORTS - count
-} more legitimate report/review record${
-REQUIRED_REPORTS - count === 1
-? ""
-: "s"
-}.
+        REQUIRED_REPORTS - count
+      } more legitimate report/review records.`
+    );
+  }
 
-🛡️ Each Telegram user can contribute
-only once to this request.`
-);
-}
+  const balance =
+    getBalance(ctx);
 
-// ----------------------------------------------
-// 5/5 VERIFIED
-// ----------------------------------------------
-
-request.status =
-"REPORTS_VERIFIED";
-
-request.reportVerifiedAt =
-now();
-
-saveRequest(
-request.id,
-request
-);
-
-await ctx.reply(
+  return ctx.reply(
 `${banGuard(
-request,
-"REPORTS VERIFIED"
+  request,
+  "REPORTS VERIFIED"
 )}
 
 ━━━━━━━━━━━━━━━━━━
 
 ✅ 5-REPORT REQUIREMENT COMPLETE
 
-📊 Reports: 5/5
-💰 Required: ${money(
-request.price
-)}
+💰 Required: ${money(request.price)}
+💵 Balance: ${money(balance)}
 
-⏳ Request is now waiting for
-👑 OWNER APPROVAL.`
-);
+${
+  balance >= request.price
+    ? "✅ Balance is sufficient."
+    : `❌ Missing: ${money(
+        request.price - balance
+      )}
 
-// ----------------------------------------------
-// NOTIFY OWNERS
-// ----------------------------------------------
+Use:
 
-const ownerIds =
-Array.isArray(config.ownerIds)
-? config.ownerIds
-: [];
-
-const ownerMessage =
-`🛡️ Bᴀɴ Gᴜᴀʀᴅ — Oᴡɴᴇʀ Rᴇᴠɪᴇᴡ
-
-🆔 Request: ${request.id}
-
-👤 User: ${
-request.username ||
-request.userId
+/deposit ${
+        request.price - balance
+      }`
 }
 
-🛡️ Service: ${
-request.service
-}
-
-📱 Target: ${
-request.target
-}
-
-📝 Reason: ${
-request.reason ||
-"Not provided"
-}
-
-📊 Reports: 5/5
-
-💰 Price: ${
-money(request.price)
-}
-
-📌 Status: REPORTS VERIFIED
-
-━━━━━━━━━━━━━━━━━━
-
-👑 This request is ready for
-owner approval.
-
-⚠️ Approving authorizes the
-configured service execution.`;
-
-for (
-const ownerId of ownerIds
-) {
-try {
-await ctx.telegram.sendMessage(
-String(ownerId),
-ownerMessage,
-Markup.inlineKeyboard([
-[
-Markup.button.callback(
-"✅ APPROVE",
-"approve_request:${request.id}"
-),
-Markup.button.callback(
-"❌ REJECT",
-"reject_request:${request.id}"
-)
-]
-])
-);
-} catch (error) {
-console.error(
-"❌ Could not notify owner ${ownerId}:",
-error.message
-);
-}
-}
+${
+  balance >= request.price
+    ? "\n👑 Request is ready for owner approval."
+    : ""
+}`
+  );
 }
 
 // ==================================================
@@ -925,33 +798,36 @@ error.message
 // ==================================================
 
 async function myRequestsCommand(ctx) {
-const requests =
-getUserRequests(
-userId(ctx)
-) || [];
+  const requests =
+    getUserRequests(userId(ctx)) || [];
 
-if (!requests.length) {
-return ctx.reply(
-"📋 You have no requests yet."
-);
-}
+  if (!requests.length) {
+    return ctx.reply(
+      "📋 You have no requests yet."
+    );
+  }
 
-const recent =
-requests
-.slice(-10)
-.reverse();
+  const recent =
+    requests
+      .slice(-10)
+      .reverse();
 
-let text =
-"📋 Yᴏᴜʀ Rᴇǫᴜᴇsᴛs\n\n";
+  let text =
+    "📋 Yᴏᴜʀ Rᴇǫᴜᴇsᴛs\n\n";
 
-for (
-const request of recent
-) {
-text +=
-"🆔 ${request.id} 🛡️ ${request.service} 🎯 ${request.target} 📊 ${request.status} ━━━━━━━━━━━━━━━━━━ ";
-}
+  for (const request of recent) {
+    text +=
+`🆔 ${request.id}
+🛡️ ${request.service}
+🎯 ${request.target}
+📊 ${request.status}
+💰 ${money(request.price)}
 
-return ctx.reply(text);
+━━━━━━━━━━━━━━━━━━
+`;
+  }
+
+  return ctx.reply(text);
 }
 
 // ==================================================
@@ -959,42 +835,42 @@ return ctx.reply(text);
 // ==================================================
 
 async function statusCommand(ctx) {
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const requestId =
-args[1];
+  const requestId = args[1];
 
-if (!requestId) {
-return ctx.reply(
-"❌ Usage:\n/status REQUEST_ID"
-);
-}
+  if (!requestId) {
+    return ctx.reply(
+`❌ Usage:
 
-const request =
-getRequest(requestId);
+/status REQUEST_ID`
+    );
+  }
 
-if (!request) {
-return ctx.reply(
-"❌ Request not found."
-);
-}
+  const request =
+    getRequest(requestId);
 
-if (
-String(request.userId) !==
-userId(ctx) &&
-!isOwner(ctx)
-) {
-return ctx.reply(
-"❌ You cannot view this request."
-);
-}
+  if (!request) {
+    return ctx.reply(
+      "❌ Request not found."
+    );
+  }
 
-return ctx.reply(
-requestSummary(request)
-);
+  if (
+    String(request.userId) !==
+      userId(ctx) &&
+    !isOwner(ctx)
+  ) {
+    return ctx.reply(
+      "❌ You cannot view this request."
+    );
+  }
+
+  return ctx.reply(
+    requestSummary(request)
+  );
 }
 
 // ==================================================
@@ -1002,67 +878,66 @@ requestSummary(request)
 // ==================================================
 
 async function cancelCommand(ctx) {
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const requestId =
-args[1];
+  const requestId = args[1];
 
-if (!requestId) {
-return ctx.reply(
-"❌ Usage:\n/cancel REQUEST_ID"
-);
-}
+  if (!requestId) {
+    return ctx.reply(
+`❌ Usage:
 
-const request =
-getRequest(requestId);
+/cancel REQUEST_ID`
+    );
+  }
 
-if (!request) {
-return ctx.reply(
-"❌ Request not found."
-);
-}
+  const request =
+    getRequest(requestId);
 
-if (
-String(request.userId) !==
-userId(ctx)
-) {
-return ctx.reply(
-"❌ This is not your request."
-);
-}
+  if (!request) {
+    return ctx.reply(
+      "❌ Request not found."
+    );
+  }
 
-if (
-[
-"COMPLETED",
-"PROCESSING"
-].includes(request.status)
-) {
-return ctx.reply(
-"❌ This request can no longer be cancelled."
-);
-}
+  if (
+    String(request.userId) !==
+    userId(ctx)
+  ) {
+    return ctx.reply(
+      "❌ This is not your request."
+    );
+  }
 
-request.status =
-"CANCELLED";
+  if (
+    [
+      "COMPLETED",
+      "PROCESSING"
+    ].includes(request.status)
+  ) {
+    return ctx.reply(
+      "❌ This request can no longer be cancelled."
+    );
+  }
 
-request.updatedAt =
-now();
+  request.status =
+    "CANCELLED";
 
-saveRequest(
-request.id,
-request
-);
+  request.updatedAt = now();
 
-return ctx.reply(
+  saveRequest(
+    request.id,
+    request
+  );
+
+  return ctx.reply(
 `❌ Rᴇǫᴜᴇsᴛ Cᴀɴᴄᴇʟʟᴇᴅ
 
 🆔 ${request.id}
 
 The request has been cancelled.`
-);
+  );
 }
 
 // ==================================================
@@ -1070,16 +945,15 @@ The request has been cancelled.`
 // ==================================================
 
 async function ownerOnly(ctx) {
-if (!isOwner(ctx)) {
-await ctx.reply(
-"⛔ Oᴡɴᴇʀ Oɴʟʏ."
-);
+  if (!isOwner(ctx)) {
+    await ctx.reply(
+      "⛔ Oᴡɴᴇʀ Oɴʟʏ."
+    );
 
-return false;
+    return false;
+  }
 
-}
-
-return true;
+  return true;
 }
 
 // ==================================================
@@ -1087,11 +961,11 @@ return true;
 // ==================================================
 
 async function ownerCommand(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-return ctx.reply(
+  return ctx.reply(
 `👑 Oᴡɴᴇʀ Pᴀɴᴇʟ
 
 📋 Rᴇǫᴜᴇsᴛs
@@ -1127,7 +1001,7 @@ return ctx.reply(
 
 /stats
 /logs`
-);
+  );
 }
 
 // ==================================================
@@ -1135,26 +1009,24 @@ return ctx.reply(
 // ==================================================
 
 async function requestsCommand(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-const requests =
-getPendingRequests() || [];
+  const requests =
+    getPendingRequests() || [];
 
-if (!requests.length) {
-return ctx.reply(
-"📋 No pending requests."
-);
-}
+  if (!requests.length) {
+    return ctx.reply(
+      "📋 No pending requests."
+    );
+  }
 
-let text =
-"👑 Pᴇɴᴅɪɴɢ Rᴇǫᴜᴇsᴛs\n\n";
+  let text =
+    "👑 Pᴇɴᴅɪɴɢ Rᴇǫᴜᴇsᴛs\n\n";
 
-for (
-const request of requests
-) {
-text +=
+  for (const request of requests) {
+    text +=
 `🆔 ${request.id}
 👤 ${request.username || request.userId}
 🛡️ ${request.service}
@@ -1165,414 +1037,167 @@ text +=
 
 ━━━━━━━━━━━━━━━━━━
 `;
-}
+  }
 
-return ctx.reply(text);
+  return ctx.reply(text);
 }
 
 async function pendingCommand(ctx) {
-return requestsCommand(ctx);
+  return requestsCommand(ctx);
 }
 
 // ==================================================
-// APPROVE COMMAND
+// APPROVE
 // ==================================================
 
 async function approveCommand(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const requestId =
-args[1];
+  const requestId = args[1];
 
-if (!requestId) {
-return ctx.reply(
-"❌ Usage:\n/approve REQUEST_ID"
-);
-}
+  if (!requestId) {
+    return ctx.reply(
+`❌ Usage:
 
-const request =
-getRequest(requestId);
+/approve REQUEST_ID`
+    );
+  }
 
-if (!request) {
-return ctx.reply(
-"❌ Request not found."
-);
-}
+  const request =
+    getRequest(requestId);
 
-if (
-getReportCount(request) <
-REQUIRED_REPORTS
-) {
-return ctx.reply(
+  if (!request) {
+    return ctx.reply(
+      "❌ Request not found."
+    );
+  }
+
+  if (
+    request.status ===
+    "COMPLETED"
+  ) {
+    return ctx.reply(
+      "⚠️ This request has already been completed."
+    );
+  }
+
+  if (
+    request.status ===
+    "CANCELLED"
+  ) {
+    return ctx.reply(
+      "❌ This request was cancelled."
+    );
+  }
+
+  if (
+    getReportCount(request) <
+    REQUIRED_REPORTS
+  ) {
+    return ctx.reply(
 `❌ Rᴇǫᴜᴇsᴛ Cᴀɴɴᴏᴛ Bᴇ Aᴘᴘʀᴏᴠᴇᴅ
 
 🆔 ${request.id}
 
 📊 Reports:
+
 ${getReportCount(request)}/5
 
 The 5-report verification requirement
 has not been completed.`
-);
-}
+    );
+  }
 
-if (
-[
-"COMPLETED",
-"PROCESSING",
-"REJECTED",
-"CANCELLED"
-].includes(request.status)
-) {
-return ctx.reply(
-"⚠️ Request status is already: ${request.status}"
-);
-}
+  const balance =
+    getBalance({
+      from: {
+        id: request.userId
+      }
+    });
 
-const balance =
-getUserBalance(
-request.userId
-);
+  if (
+    balance <
+    Number(request.price)
+  ) {
+    request.status =
+      "INSUFFICIENT_BALANCE";
 
-if (
-balance <
-Number(request.price)
-) {
-request.status =
-"INSUFFICIENT_BALANCE";
+    saveRequest(
+      request.id,
+      request
+    );
 
-saveRequest(
-  request.id,
-  request
-);
-
-return ctx.reply(
-
+    return ctx.reply(
 `❌ Iɴsᴜғғɪᴄɪᴇɴᴛ Bᴀʟᴀɴᴄᴇ
 
 👤 User: ${
-request.username ||
-request.userId
-}
+        request.username ||
+        request.userId
+      }
 
 💰 Current: ${money(balance)}
-💵 Required: ${money(request.price)}
+
+💵 Required: ${money(
+        request.price
+      )}
+
 📉 Missing: ${money(
-Number(request.price) -
-balance
-)}`
-);
-}
+        request.price - balance
+      )}`
+    );
+  }
 
-changeBalance(
-request.userId,
--Number(request.price)
-);
+  // Reserve payment
+  changeBalance(
+    request.userId,
+    -Number(request.price)
+  );
 
-request.status =
-"PROCESSING";
+  request.status =
+    "PROCESSING";
 
-request.approvedBy =
-userId(ctx);
+  request.approvedBy =
+    userId(ctx);
 
-request.approvedAt =
-now();
+  request.approvedAt =
+    now();
 
-request.paymentStatus =
-"APPROVED";
+  request.paymentStatus =
+    "APPROVED";
 
-request.executionStatus =
-"PROCESSING";
+  request.executionStatus =
+    "PROCESSING";
 
-saveRequest(
-request.id,
-request
-);
+  saveRequest(
+    request.id,
+    request
+  );
 
-await ctx.reply(
+  await ctx.reply(
 `✅ Rᴇǫᴜᴇsᴛ Aᴘᴘʀᴏᴠᴇᴅ
 
 🆔 ${request.id}
 
 📱 Target: ${request.target}
 
-💰 Charged: ${money(
-request.price
-)}
+💰 Payment reserved:
+${money(request.price)}
 
-⚡ Starting execution...`
-);
+🔋 Starting execution system...
 
-await processApprovedRequest(
-ctx,
-request
-);
-}
+⚠️ Processing indicator only.`
+  );
 
-// ==================================================
-// OWNER APPROVE BUTTON
-// ==================================================
-
-async function approveRequestButton(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
-
-const requestId =
-ctx.match[1];
-
-await ctx.answerCbQuery(
-"⏳ Processing approval..."
-);
-
-const request =
-getRequest(requestId);
-
-if (!request) {
-return ctx.reply(
-"❌ Request not found."
-);
-}
-
-if (
-getReportCount(request) <
-REQUIRED_REPORTS
-) {
-return ctx.reply(
-"❌ This request has not completed 5/5 verification."
-);
-}
-
-if (
-[
-"COMPLETED",
-"PROCESSING",
-"REJECTED",
-"CANCELLED"
-].includes(request.status)
-) {
-return ctx.reply(
-"⚠️ Request status is already: ${request.status}"
-);
-}
-
-const balance =
-getUserBalance(
-request.userId
-);
-
-if (
-balance <
-Number(request.price)
-) {
-request.status =
-"INSUFFICIENT_BALANCE";
-
-saveRequest(
-  request.id,
-  request
-);
-
-try {
-  await ctx.editMessageReplyMarkup({
-    inline_keyboard: []
-  });
-} catch {}
-
-return ctx.reply(
-
-`❌ Iɴsᴜғғɪᴄɪᴇɴᴛ Bᴀʟᴀɴᴄᴇ
-
-🆔 Request: ${request.id}
-
-👤 User: ${
-request.username ||
-request.userId
-}
-
-💰 Current: ${money(balance)}
-💵 Required: ${money(request.price)}
-📉 Missing: ${money(
-Number(request.price) -
-balance
-)}`
-);
-}
-
-// ----------------------------------------------
-// CHARGE USER
-// ----------------------------------------------
-
-changeBalance(
-request.userId,
--Number(request.price)
-);
-
-request.status =
-"PROCESSING";
-
-request.approvedBy =
-userId(ctx);
-
-request.approvedAt =
-now();
-
-request.paymentStatus =
-"APPROVED";
-
-request.executionStatus =
-"PROCESSING";
-
-saveRequest(
-request.id,
-request
-);
-
-try {
-await ctx.editMessageText(
-`✅ Rᴇǫᴜᴇsᴛ Aᴘᴘʀᴏᴠᴇᴅ
-
-🆔 ${request.id}
-
-👤 User: ${
-request.username ||
-request.userId
-}
-
-🛡️ Service: ${
-request.service
-}
-
-📱 Target: ${
-request.target
-}
-
-📊 Reports: 5/5
-
-💰 Charged: ${money(
-request.price
-)}
-
-⚡ Execution starting...`
-);
-} catch {}
-
-// ----------------------------------------------
-// EXECUTE
-// ----------------------------------------------
-
-await processApprovedRequest(
-ctx,
-request
-);
-}
-
-// ==================================================
-// OWNER REJECT BUTTON
-// ==================================================
-
-async function rejectRequestButton(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
-
-const requestId =
-ctx.match[1];
-
-await ctx.answerCbQuery(
-"Request rejected."
-);
-
-const request =
-getRequest(requestId);
-
-if (!request) {
-return ctx.reply(
-"❌ Request not found."
-);
-}
-
-if (
-[
-"COMPLETED",
-"PROCESSING",
-"REJECTED",
-"CANCELLED"
-].includes(request.status)
-) {
-return ctx.reply(
-"⚠️ Request status is already: ${request.status}"
-);
-}
-
-request.status =
-"REJECTED";
-
-request.rejectedBy =
-userId(ctx);
-
-request.rejectedAt =
-now();
-
-saveRequest(
-request.id,
-request
-);
-
-try {
-await ctx.telegram.sendMessage(
-request.userId,
-`❌ Rᴇǫᴜᴇsᴛ Rᴇᴊᴇᴄᴛᴇᴅ
-
-🆔 Request: ${request.id}
-
-📱 Target: ${request.target}
-
-👑 Your request was rejected by
-the owner.
-
-💰 No service charge was applied.`
-);
-} catch (error) {
-console.error(
-"❌ Could not notify user:",
-error.message
-);
-}
-
-try {
-await ctx.editMessageText(
-`❌ Rᴇǫᴜᴇsᴛ Rᴇᴊᴇᴄᴛᴇᴅ
-
-🆔 ${request.id}
-
-👤 User: ${
-request.username ||
-request.userId
-}
-
-🛡️ Service: ${
-request.service
-}
-
-📱 Target: ${
-request.target
-}
-
-👑 Rejected by: ${
-username(ctx)
-}"); } catch { return ctx.reply("❌ Rᴇǫᴜᴇsᴛ Rᴇᴊᴇᴄᴛᴇᴅ
-
-🆔 ${request.id}`
-);
-}
+  await processApprovedRequest(
+    ctx,
+    request
+  );
 }
 
 // ==================================================
@@ -1580,15 +1205,16 @@ username(ctx)
 // ==================================================
 
 async function progressAnimation(
-ctx,
-request
+  ctx,
+  request
 ) {
-const message =
-await ctx.telegram.sendMessage(
-request.userId,
+  const message =
+    await ctx.telegram.sendMessage(
+      request.userId,
 `🛡️ Bᴀɴ Gᴜᴀʀᴅ
 
 📱 Target: ${request.target}
+
 🟡 Status: PROCESSING
 
 ━━━━━━━━━━━━━━━━━━
@@ -1598,37 +1224,31 @@ request.userId,
 [░░░░░░░░░░] 1%
 
 ⏳ Initializing...`
-);
+    );
 
-const stages = [
-[20, "██░░░░░░░░"],
-[40, "████░░░░░░"],
-[60, "██████░░░░"],
-[80, "████████░░"],
-[100, "██████████"]
-];
+  const stages = [
+    [20, "██░░░░░░░░"],
+    [40, "████░░░░░░"],
+    [60, "██████░░░░"],
+    [80, "████████░░"],
+    [100, "██████████"]
+  ];
 
-for (
-const [percent, bar]
-of stages
-) {
-await new Promise(
-resolve =>
-setTimeout(
-resolve,
-500
-)
-);
+  for (const [percent, bar] of stages) {
+    await new Promise(
+      resolve =>
+        setTimeout(resolve, 500)
+    );
 
-try {
-  await ctx.telegram.editMessageText(
-    request.userId,
-    message.message_id,
-    undefined,
-
+    try {
+      await ctx.telegram.editMessageText(
+        request.userId,
+        message.message_id,
+        undefined,
 `🛡️ Bᴀɴ Gᴜᴀʀᴅ
 
 📱 Target: ${request.target}
+
 🟡 Status: PROCESSING
 
 ━━━━━━━━━━━━━━━━━━
@@ -1638,23 +1258,25 @@ try {
 [${bar}] ${percent}%
 
 ⏳ Processing...`
-);
-} catch {}
-}
+      );
+    } catch (error) {
+      console.log(
+        "⚠️ Progress edit skipped:",
+        error.message
+      );
+    }
+  }
 
-await new Promise(
-resolve =>
-setTimeout(
-resolve,
-500
-)
-);
+  await new Promise(
+    resolve =>
+      setTimeout(resolve, 500)
+  );
 
-try {
-await ctx.telegram.editMessageText(
-request.userId,
-message.message_id,
-undefined,
+  try {
+    await ctx.telegram.editMessageText(
+      request.userId,
+      message.message_id,
+      undefined,
 `⚡ Sʏsᴛᴇᴍ Rᴇᴀᴅʏ
 
 ⚡ Bᴀɴ Eɴɢɪɴᴇ
@@ -1662,10 +1284,15 @@ undefined,
 🔄 Executing authorized action...
 
 📱 Target: ${request.target}`
-);
-} catch {}
+    );
+  } catch (error) {
+    console.log(
+      "⚠️ Final progress edit skipped:",
+      error.message
+    );
+  }
 
-return message;
+  return message;
 }
 
 // ==================================================
@@ -1673,143 +1300,148 @@ return message;
 // ==================================================
 
 async function processApprovedRequest(
-ctx,
-request
-) {
-try {
-
-await progressAnimation(
   ctx,
   request
-);
-
-const result =
-  await executeBanRequest(
-    request
-  );
-
-request.status =
-  "COMPLETED";
-
-request.executionStatus =
-  "EXECUTED";
-
-request.completedAt =
-  now();
-
-request.result =
-  result || null;
-
-saveRequest(
-  request.id,
-  request
-);
-
-// ----------------------------------------------
-// SAVE BAN RECORD
-// ----------------------------------------------
-
-if (
-  request.service ===
-  "whatsapp_ban"
 ) {
-  saveBan(
-    request.target,
-    {
-      phone: request.target,
-      status: "BANNED",
-      reason: request.reason,
-      type: "Permanent",
-      banAt: now(),
-      requestId: request.id
+  try {
+    await progressAnimation(
+      ctx,
+      request
+    );
+
+    const result =
+      await executeBanRequest(
+        request
+      );
+
+    request.status =
+      "COMPLETED";
+
+    request.executionStatus =
+      "EXECUTED";
+
+    request.result =
+      result || null;
+
+    request.completedAt =
+      now();
+
+    saveRequest(
+      request.id,
+      request
+    );
+
+    // ----------------------------------------------
+    // SAVE BAN GUARD RECORD
+    // ----------------------------------------------
+
+    if (
+      request.service ===
+      "whatsapp_ban"
+    ) {
+      saveBan(
+        request.target,
+        {
+          phone: request.target,
+          status: "BANNED",
+          reason: request.reason,
+          type: "Permanent",
+          banAt: now(),
+          requestId: request.id
+        }
+      );
     }
-  );
-}
 
-if (
-  request.service ===
-  "whatsapp_unban"
-) {
-  saveBan(
-    request.target,
-    {
-      phone: request.target,
-      status: "UNBANNED",
-      reason: request.reason,
-      type: "Permanent Unban",
-      banAt:
-        request.banRecord?.banAt ||
-        "Unknown",
-      unbanAt: now(),
-      requestId: request.id
+    if (
+      request.service ===
+      "whatsapp_unban"
+    ) {
+      saveBan(
+        request.target,
+        {
+          phone: request.target,
+          status: "UNBANNED",
+          reason: request.reason,
+          type: "Permanent Unban",
+          banAt:
+            request.banRecord?.banAt ||
+            "Unknown",
+          unbanAt: now(),
+          requestId: request.id
+        }
+      );
     }
-  );
-}
 
-// ----------------------------------------------
-// LOG
-// ----------------------------------------------
+    addLog(
+      "REQUEST_COMPLETED",
+      {
+        requestId: request.id,
+        userId: request.userId,
+        service: request.service,
+        target: request.target,
+        ownerId: request.approvedBy
+      }
+    );
 
-addLog(
-  "REQUEST_COMPLETED",
-  {
-    requestId: request.id,
-    userId: request.userId,
-    service: request.service,
-    target: request.target,
-    ownerId: request.approvedBy
-  }
-);
+    const finalStatus =
+      request.service ===
+      "whatsapp_unban"
+        ? "🟢 Status: UNBANNED"
+        : "🔴 Status: BANNED";
 
-const finalStatus =
-  request.service ===
-  "whatsapp_unban"
-    ? "🟢 Status: UNBANNED"
-    : "🔴 Status: BANNED";
+    const title =
+      request.service ===
+      "whatsapp_unban"
+        ? "✅ Uɴʙᴀɴ Exᴇᴄᴜᴛᴇᴅ"
+        : "✅ Bᴀɴ Exᴇᴄᴜᴛᴇᴅ";
 
-const title =
-  request.service ===
-  "whatsapp_unban"
-    ? "✅ Uɴʙᴀɴ Exᴇᴄᴜᴛᴇᴅ"
-    : "✅ Bᴀɴ Exᴇᴄᴜᴛᴇᴅ";
+    const timeInfo =
+      request.service ===
+      "whatsapp_unban"
+        ? `🕐 Ban At: ${
+            request.banRecord?.banAt ||
+            "Unknown"
+          }
 
-await ctx.telegram.sendMessage(
-  request.userId,
+🕐 Unban At: ${
+            request.completedAt
+          }`
+        : `🕐 Ban At: ${
+            request.completedAt
+          }`;
 
+    await ctx.telegram.sendMessage(
+      request.userId,
 `${title}
 
 ━━━━━━━━━━━━━━━━━━
+
+🆔 Request: ${request.id}
 
 📱 Phone: ${request.target}
 
 ${finalStatus}
 
 📝 Reason: ${
-request.reason ||
-"Not provided"
-}
+        request.reason ||
+        "Not provided"
+      }
 
 ⏳ Type: ${
-request.service ===
-"whatsapp_unban"
-? "Permanent Unban"
-: "Permanent"
-}
+        request.service ===
+        "whatsapp_unban"
+          ? "Permanent Unban"
+          : "Permanent"
+      }
 
-🕐 ${
-request.service ===
-"whatsapp_unban"
-? "Ban at: ${ request.banRecord?.banAt || "Unknown" } 🕐 Unban at: ${request.completedAt}"
-: "Ban at: ${request.completedAt}"
-}
+${timeInfo}
 
 ━━━━━━━━━━━━━━━━━━
 
 🛡️ Bᴀɴ Gᴜᴀʀᴅ`
-);
+    );
 
-return ctx.reply(
-
+    await ctx.reply(
 `✅ Exᴇᴄᴜᴛɪᴏɴ Cᴏᴍᴘʟᴇᴛᴇ
 
 🆔 ${request.id}
@@ -1817,129 +1449,118 @@ return ctx.reply(
 📱 ${request.target}
 
 ⚡ Action completed successfully.`
-);
+    );
 
-} catch (error) {
+  } catch (error) {
+    console.error(
+      "❌ Request execution error:",
+      error
+    );
 
-console.error(
-  "❌ Request execution error:",
-  error
-);
+    request.status =
+      "EXECUTION_FAILED";
 
-request.status =
-  "EXECUTION_FAILED";
+    request.executionStatus =
+      "FAILED";
 
-request.executionStatus =
-  "FAILED";
+    request.error =
+      error.message;
 
-request.error =
-  error.message;
+    request.failedAt =
+      now();
 
-request.failedAt =
-  now();
+    saveRequest(
+      request.id,
+      request
+    );
 
-saveRequest(
-  request.id,
-  request
-);
+    // ----------------------------------------------
+    // REFUND RESERVED BALANCE
+    // ----------------------------------------------
 
-// ----------------------------------------------
-// REFUND
-// ----------------------------------------------
+    changeBalance(
+      request.userId,
+      Number(request.price)
+    );
 
-changeBalance(
-  request.userId,
-  Number(request.price)
-);
-
-try {
-  await ctx.telegram.sendMessage(
-    request.userId,
-
+    await ctx.telegram.sendMessage(
+      request.userId,
 `❌ Eɴɢɪɴᴇ Exᴇᴄᴜᴛɪᴏɴ Fᴀɪʟᴇᴅ
 
 🆔 Request: ${request.id}
 
 ⚠️ ${error.message}
 
-💰 Your reserved balance has
-been returned.`
-);
-} catch {}
+💰 Your reserved balance has been returned.`
+    );
 
-return ctx.reply(
-
+    await ctx.reply(
 `❌ Exᴇᴄᴜᴛɪᴏɴ Fᴀɪʟᴇᴅ
 
 🆔 ${request.id}
 
-${error.message}`
-);
-}
+⚠️ ${error.message}`
+    );
+  }
 }
 
 // ==================================================
-// REJECT COMMAND
+// REJECT
 // ==================================================
 
 async function rejectCommand(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const requestId =
-args[1];
+  const requestId = args[1];
 
-if (!requestId) {
-return ctx.reply(
-"❌ Usage:\n/reject REQUEST_ID"
-);
-}
+  if (!requestId) {
+    return ctx.reply(
+`❌ Usage:
 
-const request =
-getRequest(requestId);
+/reject REQUEST_ID`
+    );
+  }
 
-if (!request) {
-return ctx.reply(
-"❌ Request not found."
-);
-}
+  const request =
+    getRequest(requestId);
 
-if (
-[
-"COMPLETED",
-"PROCESSING",
-"REJECTED",
-"CANCELLED"
-].includes(request.status)
-) {
-return ctx.reply(
-"⚠️ Request status is already: ${request.status}"
-);
-}
+  if (!request) {
+    return ctx.reply(
+      "❌ Request not found."
+    );
+  }
 
-request.status =
-"REJECTED";
+  if (
+    request.status ===
+    "COMPLETED"
+  ) {
+    return ctx.reply(
+      "❌ Completed requests cannot be rejected."
+    );
+  }
 
-request.rejectedBy =
-userId(ctx);
+  request.status =
+    "REJECTED";
 
-request.rejectedAt =
-now();
+  request.rejectedBy =
+    userId(ctx);
 
-saveRequest(
-request.id,
-request
-);
+  request.rejectedAt =
+    now();
 
-try {
-await ctx.telegram.sendMessage(
-request.userId,
+  saveRequest(
+    request.id,
+    request
+  );
+
+  await ctx.telegram.sendMessage(
+    request.userId,
 `❌ Rᴇǫᴜᴇsᴛ Rᴇᴊᴇᴄᴛᴇᴅ
 
 🆔 ${request.id}
@@ -1949,14 +1570,13 @@ request.userId,
 👑 The owner rejected your request.
 
 💰 No service charge was applied.`
-);
-} catch {}
+  );
 
-return ctx.reply(
+  return ctx.reply(
 `❌ Rᴇǫᴜᴇsᴛ Rᴇᴊᴇᴄᴛᴇᴅ
 
 🆔 ${request.id}`
-);
+  );
 }
 
 // ==================================================
@@ -1964,162 +1584,168 @@ return ctx.reply(
 // ==================================================
 
 async function premiumCommand(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const targetId =
-args[1];
+  const targetId = args[1];
 
-if (
-!targetId ||
-!/^\d+$/.test(targetId)
-) {
-return ctx.reply(
+  if (
+    !targetId ||
+    !/^\d+$/.test(targetId)
+  ) {
+    return ctx.reply(
 `❌ Usage:
 
 /premium USER_ID`
-);
-}
+    );
+  }
 
-setPremium(
-targetId,
-true
-);
+  setPremium(
+    targetId,
+    true
+  );
 
-return ctx.reply(
+  return ctx.reply(
 `💎 Pʀᴇᴍɪᴜᴍ Gʀᴀɴᴛᴇᴅ
 
 👤 User ID: ${targetId}
+
 💎 Status: PREMIUM
+
 💰 Price: FREE
+
 👑 Granted by: Owner
 
 ✅ Premium access activated.`
-);
+  );
 }
 
 async function premiumOffCommand(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const targetId =
-args[1];
+  const targetId = args[1];
 
-if (
-!targetId ||
-!/^\d+$/.test(targetId)
-) {
-return ctx.reply(
+  if (
+    !targetId ||
+    !/^\d+$/.test(targetId)
+  ) {
+    return ctx.reply(
 `❌ Usage:
 
 /premiumoff USER_ID`
-);
-}
+    );
+  }
 
-setPremium(
-targetId,
-false
-);
+  setPremium(
+    targetId,
+    false
+  );
 
-return ctx.reply(
+  return ctx.reply(
 `🔴 Pʀᴇᴍɪᴜᴍ Rᴇᴍᴏᴠᴇᴅ
 
 👤 User ID: ${targetId}
+
 💎 Status: STANDARD`
-);
+  );
 }
 
 async function premiumInfoCommand(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const targetId =
-args[1];
+  const targetId = args[1];
 
-if (!targetId) {
-return ctx.reply(
+  if (!targetId) {
+    return ctx.reply(
 `❌ Usage:
 
 /premiuminfo USER_ID`
-);
-}
+    );
+  }
 
-const user =
-getUser(targetId);
+  const user =
+    getUser(targetId);
 
-return ctx.reply(
+  return ctx.reply(
 `💎 Pʀᴇᴍɪᴜᴍ Iɴғᴏ
 
 🆔 User ID: ${targetId}
-👤 User: ${user?.username || "Unknown"}
+
+👤 User: ${
+      user?.username ||
+      "Unknown"
+    }
 
 💎 Premium: ${
-isPremium(targetId)
-? "YES"
-: "NO"
-}
+      isPremium(targetId)
+        ? "YES"
+        : "NO"
+    }
 
 💰 Balance: ${money(
-user?.balance || 0
-)}`
-);
+      user?.balance || 0
+    )}`
+  );
 }
 
 async function premiumUsersCommand(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-const database =
-require("../database/database")
-.readDatabase();
+  const database =
+    readDatabase();
 
-const users =
-database?.users || {};
+  const users =
+    database?.users || {};
 
-const premium =
-Object.values(users)
-.filter(
-user =>
-user?.premium === true ||
-user?.isPremium === true
-);
+  const premium =
+    Object.values(users).filter(
+      user =>
+        user?.premium === true ||
+        user?.isPremium === true
+    );
 
-if (!premium.length) {
-return ctx.reply(
-"💎 No Premium users found."
-);
-}
+  if (!premium.length) {
+    return ctx.reply(
+      "💎 No Premium users found."
+    );
+  }
 
-let text =
-"💎 Pʀᴇᴍɪᴜᴍ Uѕᴇʀs\n\n";
+  let text =
+    "💎 Pʀᴇᴍɪᴜᴍ Uѕᴇʀs\n\n";
 
-for (
-const user of premium
-) {
-text +=
-"👤 ${user.username || "User"} 🆔 ${user.id} ━━━━━━━━━━━━━━━━━━ ";
-}
+  for (const user of premium) {
+    text +=
+`👤 ${
+      user.username ||
+      "User"
+    }
 
-return ctx.reply(text);
+🆔 ${user.id}
+
+━━━━━━━━━━━━━━━━━━
+`;
+  }
+
+  return ctx.reply(text);
 }
 
 // ==================================================
@@ -2127,40 +1753,36 @@ return ctx.reply(text);
 // ==================================================
 
 async function creditCommand(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const targetId =
-args[1];
+  const targetId = args[1];
+  const amount = Number(args[2]);
 
-const amount =
-Number(args[2]);
-
-if (
-!targetId ||
-!amount ||
-amount <= 0
-) {
-return ctx.reply(
+  if (
+    !targetId ||
+    !amount ||
+    amount <= 0
+  ) {
+    return ctx.reply(
 `❌ Usage:
 
 /credit USER_ID AMOUNT`
-);
-}
+    );
+  }
 
-const balance =
-changeBalance(
-targetId,
-amount
-);
+  const balance =
+    changeBalance(
+      targetId,
+      amount
+    );
 
-return ctx.reply(
+  return ctx.reply(
 `💰 Bᴀʟᴀɴᴄᴇ Cʀᴇᴅɪᴛᴇᴅ
 
 👤 User ID: ${targetId}
@@ -2168,9 +1790,9 @@ return ctx.reply(
 ➕ Added: ${money(amount)}
 
 💵 New Balance: ${money(
-balance
-)}`
-);
+      balance
+    )}`
+  );
 }
 
 // ==================================================
@@ -2178,55 +1800,51 @@ balance
 // ==================================================
 
 async function debitCommand(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const targetId =
-args[1];
+  const targetId = args[1];
+  const amount = Number(args[2]);
 
-const amount =
-Number(args[2]);
-
-if (
-!targetId ||
-!amount ||
-amount <= 0
-) {
-return ctx.reply(
+  if (
+    !targetId ||
+    !amount ||
+    amount <= 0
+  ) {
+    return ctx.reply(
 `❌ Usage:
 
 /debit USER_ID AMOUNT`
-);
-}
+    );
+  }
 
-const user =
-getUser(targetId) || {
-id: targetId,
-balance: 0
-};
+  const user =
+    getUser(targetId) || {
+      id: targetId,
+      balance: 0
+    };
 
-if (
-Number(user.balance || 0) <
-amount
-) {
-return ctx.reply(
-"❌ User does not have enough balance."
-);
-}
+  if (
+    Number(user.balance || 0) <
+    amount
+  ) {
+    return ctx.reply(
+      "❌ User does not have enough balance."
+    );
+  }
 
-const balance =
-changeBalance(
-targetId,
--amount
-);
+  const balance =
+    changeBalance(
+      targetId,
+      -amount
+    );
 
-return ctx.reply(
+  return ctx.reply(
 `💰 Bᴀʟᴀɴᴄᴇ Dᴇʙɪᴛᴇᴅ
 
 👤 User ID: ${targetId}
@@ -2234,9 +1852,9 @@ return ctx.reply(
 ➖ Removed: ${money(amount)}
 
 💵 New Balance: ${money(
-balance
-)}`
-);
+      balance
+    )}`
+  );
 }
 
 // ==================================================
@@ -2244,32 +1862,31 @@ balance
 // ==================================================
 
 async function usersCommand(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-const database =
-require("../database/database")
-.readDatabase();
+  const database =
+    readDatabase();
 
-const users =
-Object.values(
-database?.users || {}
-);
+  const users =
+    Object.values(
+      database?.users || {}
+    );
 
-return ctx.reply(
+  return ctx.reply(
 `👥 Uѕᴇʀ Sᴛᴀᴛɪsᴛɪᴄs
 
 👤 Total Users: ${users.length}
 
 💎 Premium Users: ${
-users.filter(
-u =>
-u?.premium === true ||
-u?.isPremium === true
-).length
-}`
-);
+      users.filter(
+        u =>
+          u?.premium === true ||
+          u?.isPremium === true
+      ).length
+    }`
+  );
 }
 
 // ==================================================
@@ -2277,55 +1894,53 @@ u?.isPremium === true
 // ==================================================
 
 async function userInfoCommand(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-const args =
-ctx.message.text
-.trim()
-.split(/\s+/);
+  const args = ctx.message.text
+    .trim()
+    .split(/\s+/);
 
-const targetId =
-args[1];
+  const targetId = args[1];
 
-if (!targetId) {
-return ctx.reply(
+  if (!targetId) {
+    return ctx.reply(
 `❌ Usage:
 
 /userinfo USER_ID`
-);
-}
+    );
+  }
 
-const user =
-getUser(targetId);
+  const user =
+    getUser(targetId);
 
-if (!user) {
-return ctx.reply(
-"❌ User not found."
-);
-}
+  if (!user) {
+    return ctx.reply(
+      "❌ User not found."
+    );
+  }
 
-return ctx.reply(
+  return ctx.reply(
 `👤 Uѕᴇʀ Iɴғᴏ
 
 🆔 ID: ${targetId}
 
 👤 Username: ${
-user.username ||
-"Unknown"
-}
+      user.username ||
+      "Unknown"
+    }
 
-💰 Balance: ${
-money(user.balance)
-}
+💰 Balance: ${money(
+      user.balance
+    )}
 
 💎 Premium: ${
-isPremium(targetId)
-? "YES"
-: "NO"
-}`
-);
+      isPremium(targetId)
+        ? "YES"
+        : "NO"
+    }`
+  );
 }
 
 // ==================================================
@@ -2333,25 +1948,24 @@ isPremium(targetId)
 // ==================================================
 
 async function statsCommand(ctx) {
-if (!(await ownerOnly(ctx))) {
-return;
-}
+  if (!(await ownerOnly(ctx))) {
+    return;
+  }
 
-const database =
-require("../database/database")
-.readDatabase();
+  const database =
+    readDatabase();
 
-const users =
-Object.values(
-database?.users || {}
-);
+  const users =
+    Object.values(
+      database?.users || {}
+    );
 
-const requests =
-Object.values(
-database?.requests || {}
-);
+  const requests =
+    Object.values(
+      database?.requests || {}
+    );
 
-return ctx.reply(
+  return ctx.reply(
 `📊 Bᴀɴ Sʏsᴛᴇᴍ Sᴛᴀᴛs
 
 👥 Users: ${users.length}
@@ -2360,34 +1974,34 @@ return ctx.reply(
 
 ⏳ Pending:
 ${
-requests.filter(
-r =>
-![
-"COMPLETED",
-"REJECTED",
-"CANCELLED"
-].includes(r.status)
-).length
-}
+      requests.filter(
+        r =>
+          ![
+            "COMPLETED",
+            "REJECTED",
+            "CANCELLED"
+          ].includes(r.status)
+      ).length
+    }
 
 ✅ Completed:
 ${
-requests.filter(
-r =>
-r.status ===
-"COMPLETED"
-).length
-}
+      requests.filter(
+        r =>
+          r.status ===
+          "COMPLETED"
+      ).length
+    }
 
 ❌ Rejected:
 ${
-requests.filter(
-r =>
-r.status ===
-"REJECTED"
-).length
-}`
-);
+      requests.filter(
+        r =>
+          r.status ===
+          "REJECTED"
+      ).length
+    }`
+  );
 }
 
 // ==================================================
@@ -2395,7 +2009,7 @@ r.status ===
 // ==================================================
 
 async function servicesCommand(ctx) {
-return ctx.reply(
+  return ctx.reply(
 `🛡️ Sᴇʀᴠɪᴄᴇs
 
 📱 WʜᴀᴛsAᴘᴘ
@@ -2424,7 +2038,7 @@ return ctx.reply(
 
 ⚠️ Requests require verification,
 payment/balance and owner approval.`
-);
+  );
 }
 
 // ==================================================
@@ -2432,34 +2046,24 @@ payment/balance and owner approval.`
 // ==================================================
 
 async function priceCommand(ctx) {
-return ctx.reply(
+  return ctx.reply(
 `💰 Pʀɪᴄɪɴɢ
 
 👤 User Ban:
-${money(
-config.prices.userBan
-)}
+${money(config.prices?.userBan)}
 
 🔓 User Unban:
-${money(
-config.prices.userUnban
-)}
+${money(config.prices?.userUnban)}
 
 👥 Group/Channel Ban:
-${money(
-config.prices.groupChannelBan
-)}
+${money(config.prices?.groupChannelBan)}
 
 🔓 Group/Channel Unban:
-${money(
-config.prices.groupChannelUnban
-)}
+${money(config.prices?.groupChannelUnban)}
 
 🎁 Referral Reward:
-${money(
-config.referral.reward
-)}`
-);
+${money(config.referral?.reward)}`
+  );
 }
 
 // ==================================================
@@ -2468,246 +2072,234 @@ config.referral.reward
 
 function registerHandlers(bot) {
 
-// ----------------------------------------------
-// USER COMMANDS
-// ----------------------------------------------
+  // ----------------------------------------------
+  // USER COMMANDS
+  // ----------------------------------------------
 
-bot.start(
-startCommand
-);
+  bot.start(startCommand);
 
-bot.command(
-"help",
-helpCommand
-);
+  bot.command(
+    "help",
+    helpCommand
+  );
 
-bot.command(
-"menu",
-startCommand
-);
+  bot.command(
+    "menu",
+    startCommand
+  );
 
-bot.command(
-"profile",
-profileCommand
-);
+  bot.command(
+    "profile",
+    profileCommand
+  );
 
-bot.command(
-"id",
-idCommand
-);
+  bot.command(
+    "id",
+    idCommand
+  );
 
-bot.command(
-"balance",
-balanceCommand
-);
+  bot.command(
+    "balance",
+    balanceCommand
+  );
 
-bot.command(
-"deposit",
-depositCommand
-);
+  bot.command(
+    "deposit",
+    depositCommand
+  );
 
-bot.command(
-"ban",
-banCommand
-);
+  bot.command(
+    "ban",
+    banCommand
+  );
 
-bot.command(
-"unban",
-unbanCommand
-);
+  bot.command(
+    "unban",
+    unbanCommand
+  );
 
-bot.command(
-"report",
-reportCommand
-);
+  bot.command(
+    "report",
+    reportCommand
+  );
 
-bot.command(
-"myrequests",
-myRequestsCommand
-);
+  bot.command(
+    "myrequests",
+    myRequestsCommand
+  );
 
-bot.command(
-"history",
-myRequestsCommand
-);
+  bot.command(
+    "history",
+    myRequestsCommand
+  );
 
-bot.command(
-"status",
-statusCommand
-);
+  bot.command(
+    "status",
+    statusCommand
+  );
 
-bot.command(
-"cancel",
-cancelCommand
-);
+  bot.command(
+    "cancel",
+    cancelCommand
+  );
 
-bot.command(
-"services",
-servicesCommand
-);
+  bot.command(
+    "services",
+    servicesCommand
+  );
 
-bot.command(
-"price",
-priceCommand
-);
+  bot.command(
+    "price",
+    priceCommand
+  );
 
-// ----------------------------------------------
-// OWNER COMMANDS
-// ----------------------------------------------
+  // ----------------------------------------------
+  // OWNER COMMANDS
+  // ----------------------------------------------
 
-bot.command(
-"owner",
-ownerCommand
-);
+  bot.command(
+    "owner",
+    ownerCommand
+  );
 
-bot.command(
-"panel",
-ownerCommand
-);
+  bot.command(
+    "panel",
+    ownerCommand
+  );
 
-bot.command(
-"requests",
-requestsCommand
-);
+  bot.command(
+    "requests",
+    requestsCommand
+  );
 
-bot.command(
-"pending",
-pendingCommand
-);
+  bot.command(
+    "pending",
+    pendingCommand
+  );
 
-bot.command(
-"approve",
-approveCommand
-);
+  bot.command(
+    "approve",
+    approveCommand
+  );
 
-bot.command(
-"reject",
-rejectCommand
-);
+  bot.command(
+    "reject",
+    rejectCommand
+  );
 
-bot.command(
-"premium",
-premiumCommand
-);
+  bot.command(
+    "premium",
+    premiumCommand
+  );
 
-bot.command(
-"premiumoff",
-premiumOffCommand
-);
+  bot.command(
+    "premiumoff",
+    premiumOffCommand
+  );
 
-bot.command(
-"premiuminfo",
-premiumInfoCommand
-);
+  bot.command(
+    "premiuminfo",
+    premiumInfoCommand
+  );
 
-bot.command(
-"premiumusers",
-premiumUsersCommand
-);
+  bot.command(
+    "premiumusers",
+    premiumUsersCommand
+  );
 
-bot.command(
-"credit",
-creditCommand
-);
+  bot.command(
+    "credit",
+    creditCommand
+  );
 
-bot.command(
-"debit",
-debitCommand
-);
+  bot.command(
+    "debit",
+    debitCommand
+  );
 
-bot.command(
-"users",
-usersCommand
-);
+  bot.command(
+    "users",
+    usersCommand
+  );
 
-bot.command(
-"userinfo",
-userInfoCommand
-);
+  bot.command(
+    "userinfo",
+    userInfoCommand
+  );
 
-bot.command(
-"stats",
-statsCommand
-);
+  bot.command(
+    "stats",
+    statsCommand
+  );
 
-// ----------------------------------------------
-// OWNER APPROVAL BUTTONS
-// ----------------------------------------------
+  // ----------------------------------------------
+  // TEXT INPUT
+  // ----------------------------------------------
 
-bot.action(
-/^approve_request:(.+)$/,
-approveRequestButton
-);
+  bot.on(
+    "text",
+    async ctx => {
 
-bot.action(
-/^reject_request:(.+)$/,
-rejectRequestButton
-);
+      const id =
+        userId(ctx);
 
-// ----------------------------------------------
-// TEXT INPUT
-// ----------------------------------------------
+      const state =
+        waiting.get(id);
 
-bot.on(
-"text",
-async ctx => {
+      if (!state) {
+        return;
+      }
 
-  const id =
-    userId(ctx);
+      const request =
+        getRequest(
+          state.requestId
+        );
 
-  const state =
-    waiting.get(id);
+      if (!request) {
+        waiting.delete(id);
 
-  if (!state) {
-    return;
-  }
+        return ctx.reply(
+          "❌ Request no longer exists."
+        );
+      }
 
-  const request =
-    getRequest(
-      state.requestId
-    );
+      if (
+        state.type ===
+        "reason"
+      ) {
 
-  if (!request) {
-    waiting.delete(id);
+        const reason =
+          ctx.message.text.trim();
 
-    return ctx.reply(
-      "❌ Request no longer exists."
-    );
-  }
+        if (!reason) {
+          return ctx.reply(
+            "❌ Please provide a valid reason."
+          );
+        }
 
-  if (
-    state.type ===
-    "reason"
-  ) {
+        request.reason =
+          reason;
 
-    const reason =
-      ctx.message.text.trim();
+        request.status =
+          "REPORT_PENDING";
 
-    if (!reason) {
-      return ctx.reply(
-        "❌ Please provide a valid reason."
-      );
-    }
+        request.updatedAt =
+          now();
 
-    request.reason =
-      reason;
+        saveRequest(
+          request.id,
+          request
+        );
 
-    request.status =
-      "REPORT_PENDING";
+        waiting.delete(id);
 
-    request.updatedAt =
-      now();
-
-    saveRequest(
-      request.id,
-      request
-    );
-
-    waiting.delete(id);
-
-    return ctx.reply(
-
+        return ctx.reply(
 `${banGuard(request)}
+
+━━━━━━━━━━━━━━━━━━
+
+📝 Reason:
+${request.reason}
 
 ━━━━━━━━━━━━━━━━━━
 
@@ -2720,31 +2312,29 @@ for this request, use:
 
 Each Telegram user can contribute
 only once to the request.`
-);
-}
-}
-);
-
-// ----------------------------------------------
-// ERROR HANDLING
-// ----------------------------------------------
-
-bot.catch(
-(error, ctx) => {
-
-  console.error(
-    "❌ Telegram handler error:",
-    error
+        );
+      }
+    }
   );
 
-  try {
-    ctx.reply(
-      "❌ An unexpected error occurred. Please try again."
-    );
-  } catch {}
-}
+  // ----------------------------------------------
+  // ERROR HANDLING
+  // ----------------------------------------------
 
-);
+  bot.catch(
+    async (error, ctx) => {
+      console.error(
+        "❌ Telegram handler error:",
+        error
+      );
+
+      try {
+        await ctx.reply(
+          "❌ An unexpected error occurred. Please try again."
+        );
+      } catch {}
+    }
+  );
 }
 
 // ==================================================
@@ -2752,6 +2342,6 @@ bot.catch(
 // ==================================================
 
 module.exports = {
-registerHandlers,
-processApprovedRequest
+  registerHandlers,
+  processApprovedRequest
 };
